@@ -2,18 +2,20 @@ package com.skb.player.ui
 
 import android.Manifest
 import android.app.Activity
-import androidx.activity.result.IntentSenderRequest
-import androidx.activity.result.contract.ActivityResultContracts
-import android.provider.MediaStore
-import android.widget.Toast
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
+import android.provider.MediaStore
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -109,12 +111,12 @@ fun HomeScaffold(
     var libraryVideos by remember { mutableStateOf<List<VideoItem>>(emptyList()) }
     var sortMode by remember { mutableIntStateOf(0) }
     var refreshKey by remember { mutableIntStateOf(0) }
+
     var actionVideo by remember { mutableStateOf<VideoItem?>(null) }
     var infoVideo by remember { mutableStateOf<VideoItem?>(null) }
     var renameVideo by remember { mutableStateOf<VideoItem?>(null) }
     var deleteVideo by remember { mutableStateOf<VideoItem?>(null) }
     var saveToPlaylistVideo by remember { mutableStateOf<VideoItem?>(null) }
-    var favTick by remember { mutableIntStateOf(0) }
     var pendingDeleteVideo by remember { mutableStateOf<VideoItem?>(null) }
 
     val permLauncher = rememberLauncherForActivityResult(
@@ -149,6 +151,17 @@ fun HomeScaffold(
         }
     }
 
+    val deleteLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        val v = pendingDeleteVideo
+        pendingDeleteVideo = null
+        if (v != null && result.resultCode == Activity.RESULT_OK) {
+            Toast.makeText(context, "Deleted: ${v.name}", Toast.LENGTH_SHORT).show()
+            refreshKey++
+        }
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
@@ -171,11 +184,19 @@ fun HomeScaffold(
                     onOpenVideo, onPickVideo, onOpenHistory, onOpenSearch
                 ) { permLauncher.launch(requiredPerms()) }
                 1 -> VideosTab(
-                    sortedVideos, hasPermission, SortMode.entries[sortMode], theme,
-                    onOpenVideo, onPickVideo, onPlayAll, onOpenSearch,
+                    libraryVideos = sortedVideos,
+                    hasPermission = hasPermission,
+                    sortMode = SortMode.entries[sortMode],
+                    theme = theme,
+                    onOpenVideo = onOpenVideo,
+                    onPickVideo = onPickVideo,
+                    onPlayAll = onPlayAll,
+                    onOpenSearch = onOpenSearch,
                     onMore = { actionVideo = it },
-                    onCycleSort = { sortMode = (sortMode + 1) % SortMode.entries.size }
-                ) { permLauncher.launch(requiredPerms()) }
+                    onCycleSort = { sortMode = (sortMode + 1) % SortMode.entries.size },
+                    onRequestPermission = { permLauncher.launch(requiredPerms()) },
+                    onDeleted = { refreshKey++ }
+                )
                 2 -> if (hasPermission) {
                     FolderScreen(
                         allVideos = libraryVideos,
@@ -193,8 +214,7 @@ fun HomeScaffold(
                     allVideos = libraryVideos,
                     theme = theme,
                     onOpenVideo = onOpenVideo,
-                    onPlayUris = onPlayUris,
-                    onRefresh = { refreshKey++ }
+                    onPlayUris = onPlayUris
                 )
                 else -> SettingsTabContent(
                     settings = settings,
@@ -203,17 +223,6 @@ fun HomeScaffold(
                     onRefreshLibrary = { refreshKey++ }
                 )
             }
-        }
-    }
-
-    val deleteLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartIntentSenderForResult()
-    ) { result ->
-        val v = pendingDeleteVideo
-        pendingDeleteVideo = null
-        if (v != null && result.resultCode == Activity.RESULT_OK) {
-            Toast.makeText(context, "Deleted: ${v.name}", Toast.LENGTH_SHORT).show()
-            refreshKey++
         }
     }
 
@@ -227,18 +236,17 @@ fun HomeScaffold(
             onInfo = { infoVideo = v },
             onRename = { renameVideo = v },
             onDelete = { deleteVideo = v },
-            onToggleFavorite = { favorites.toggleFavorite(v.uri); favTick++ },
-            onToggleWatchLater = { favorites.toggleWatchLater(v.uri); favTick++ },
+            onToggleFavorite = { favorites.toggleFavorite(v.uri) },
+            onToggleWatchLater = { favorites.toggleWatchLater(v.uri) },
             onSaveToPlaylist = { saveToPlaylistVideo = v },
             onShare = {
-                val ctx = context
                 try {
                     val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
                         type = "video/*"
                         putExtra(android.content.Intent.EXTRA_STREAM, v.uri)
                         addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     }
-                    ctx.startActivity(
+                    context.startActivity(
                         android.content.Intent.createChooser(send, "Share video")
                     )
                 } catch (_: Exception) {}
@@ -372,7 +380,7 @@ private fun HomeTab(
         } else if (libraryVideos.isNotEmpty()) {
             item { SectionHeader("Recently Added") }
             items(libraryVideos.take(8), key = { "l_${it.uri}" }) { v ->
-                LibraryCard(v, theme) { onOpenVideo(v.uri) }
+                LibraryCard(v, theme, { onOpenVideo(v.uri) })
             }
         }
 
@@ -397,13 +405,13 @@ private fun VideosTab(
     onOpenSearch: () -> Unit,
     onMore: (VideoItem) -> Unit,
     onCycleSort: () -> Unit,
-    onRequestPermission: () -> Unit
+    onRequestPermission: () -> Unit,
+    onDeleted: () -> Unit
 ) {
     val context = LocalContext.current
     var selectionMode by remember { mutableStateOf(false) }
     var selectedUris by remember { mutableStateOf<Set<String>>(emptySet()) }
     var pendingDeleteUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
-    var refreshTick by remember { mutableIntStateOf(0) }
 
     fun exitSelection() {
         selectionMode = false
@@ -417,11 +425,11 @@ private fun VideosTab(
     ) { result ->
         val uris = pendingDeleteUris
         pendingDeleteUris = emptyList()
-        if (result.resultCode == android.app.Activity.RESULT_OK && uris.isNotEmpty()) {
+        if (result.resultCode == Activity.RESULT_OK && uris.isNotEmpty()) {
             Toast.makeText(
                 context, "Deleted ${uris.size} item(s)", Toast.LENGTH_SHORT
             ).show()
-            refreshTick++
+            onDeleted()
         }
         exitSelection()
     }
@@ -453,7 +461,6 @@ private fun VideosTab(
                                 IntentSenderRequest.Builder(pi.intentSender).build()
                             )
                         } catch (e: Exception) {
-                            // Fallback: try direct delete
                             var ok = 0
                             uris.forEach { u ->
                                 val r = FileOps.delete(context, u)
@@ -462,7 +469,7 @@ private fun VideosTab(
                             Toast.makeText(
                                 context, "Deleted $ok/${uris.size}", Toast.LENGTH_LONG
                             ).show()
-                            refreshTick++
+                            onDeleted()
                             exitSelection()
                         }
                     }
@@ -526,7 +533,7 @@ private fun VideosTab(
                 }
             }
 
-            items(libraryVideos, key = { "v_${it.uri}_$refreshTick" }) { v ->
+            items(libraryVideos, key = { "v_${it.uri}" }) { v ->
                 val key = v.uri.toString()
                 val selected = selectedUris.contains(key)
                 LibraryCard(
@@ -602,8 +609,7 @@ private fun ListsTab(
     allVideos: List<VideoItem>,
     theme: SKBTheme,
     onOpenVideo: (Uri) -> Unit,
-    onPlayUris: (List<Uri>) -> Unit,
-    onRefresh: () -> Unit
+    onPlayUris: (List<Uri>) -> Unit
 ) {
     var refresh by remember { mutableIntStateOf(0) }
     val favUris = remember(refresh) { favorites.getFavorites() }
@@ -645,10 +651,11 @@ private fun ListsTab(
             }
         }
         if (favVideos.isEmpty()) {
-            item { Text("No favorites yet. Tap \u2B50 in player.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            item { Text("No favorites yet. Tap \u2B50 in player.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant) }
         } else {
             items(favVideos, key = { "fav_${it.uri}" }) { v ->
-                LibraryCard(v, theme) { onOpenVideo(v.uri) }
+                LibraryCard(v, theme, { onOpenVideo(v.uri) })
             }
         }
 
@@ -670,10 +677,11 @@ private fun ListsTab(
             }
         }
         if (laterVideos.isEmpty()) {
-            item { Text("Nothing queued. Tap \u23F0 in player.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            item { Text("Nothing queued. Tap \u23F0 in player.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant) }
         } else {
             items(laterVideos, key = { "later_${it.uri}" }) { v ->
-                LibraryCard(v, theme) { onOpenVideo(v.uri) }
+                LibraryCard(v, theme, { onOpenVideo(v.uri) })
             }
         }
 
@@ -684,7 +692,8 @@ private fun ListsTab(
                 fontWeight = FontWeight.SemiBold)
         }
         if (allPlaylists.isEmpty()) {
-            item { Text("No playlists yet. Save from player.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            item { Text("No playlists yet. Save from player.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant) }
         } else {
             items(allPlaylists, key = { it.id }) { p ->
                 Card(
