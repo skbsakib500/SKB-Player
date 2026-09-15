@@ -28,9 +28,11 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -65,7 +67,9 @@ fun HomeScaffold(
     tab: Int,
     onTabChange: (Int) -> Unit,
     onOpenVideo: (Uri) -> Unit,
-    onPickVideo: () -> Unit
+    onPickVideo: () -> Unit,
+    onPlayAll: (List<VideoItem>) -> Unit,
+    onOpenHistory: () -> Unit
 ) {
     val context = LocalContext.current
     var hasPermission by remember { mutableStateOf(false) }
@@ -111,12 +115,14 @@ fun HomeScaffold(
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when (tab) {
-                0 -> HomeTab(history, libraryVideos, hasPermission, onOpenVideo, onPickVideo) {
-                    permLauncher.launch(requiredPerms())
-                }
-                1 -> VideosTab(libraryVideos, hasPermission, onOpenVideo, onPickVideo) {
-                    permLauncher.launch(requiredPerms())
-                }
+                0 -> HomeTab(
+                    history, libraryVideos, hasPermission,
+                    onOpenVideo, onPickVideo, onOpenHistory
+                ) { permLauncher.launch(requiredPerms()) }
+                1 -> VideosTab(
+                    libraryVideos, hasPermission,
+                    onOpenVideo, onPickVideo, onPlayAll
+                ) { permLauncher.launch(requiredPerms()) }
                 2 -> PlaceholderTab(
                     "\uD83C\uDFB5 Music",
                     "Background playback, playlists, equalizer \u2014 coming soon"
@@ -137,9 +143,10 @@ private fun HomeTab(
     hasPermission: Boolean,
     onOpenVideo: (Uri) -> Unit,
     onPickVideo: () -> Unit,
+    onOpenHistory: () -> Unit,
     onRequestPermission: () -> Unit
 ) {
-    val recent = history.getRecent()
+    val recent = history.getRecent(10)
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -149,7 +156,17 @@ private fun HomeTab(
         item { SearchBarPlaceholder() }
 
         if (recent.isNotEmpty()) {
-            item { SectionHeader("Continue Watching") }
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SectionHeader("Continue Watching", Modifier.weight(1f))
+                    TextButton(onClick = onOpenHistory) {
+                        Text("History >", color = Color(0xFF00E5FF))
+                    }
+                }
+            }
             items(recent, key = { "recent_${it.uri}" }) { e ->
                 RecentCard(e) { onOpenVideo(e.uri) }
             }
@@ -184,6 +201,7 @@ private fun VideosTab(
     hasPermission: Boolean,
     onOpenVideo: (Uri) -> Unit,
     onPickVideo: () -> Unit,
+    onPlayAll: (List<VideoItem>) -> Unit,
     onRequestPermission: () -> Unit
 ) {
     LazyColumn(
@@ -192,6 +210,7 @@ private fun VideosTab(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         item { Header() }
+
         if (!hasPermission) {
             item {
                 Column {
@@ -203,14 +222,38 @@ private fun VideosTab(
         } else if (libraryVideos.isEmpty()) {
             item { Text("No videos found on device.") }
         } else {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = { onPlayAll(libraryVideos) },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("\u25B6 Play All") }
+                    OutlinedButton(
+                        onClick = onPickVideo,
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Pick") }
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "${libraryVideos.size} videos in library",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF888888)
+                )
+            }
             items(libraryVideos, key = { "vid_${it.uri}" }) { v ->
                 LibraryCard(v) { onOpenVideo(v.uri) }
             }
         }
-        item {
-            Spacer(Modifier.height(12.dp))
-            Button(onClick = onPickVideo, modifier = Modifier.fillMaxWidth()) {
-                Text("Pick Video from Storage")
+
+        if (!hasPermission) {
+            item {
+                Spacer(Modifier.height(12.dp))
+                Button(onClick = onPickVideo, modifier = Modifier.fillMaxWidth()) {
+                    Text("Pick Video from Storage")
+                }
             }
         }
     }
@@ -260,12 +303,12 @@ private fun SearchBarPlaceholder() {
 }
 
 @Composable
-private fun SectionHeader(text: String) {
+private fun SectionHeader(text: String, modifier: Modifier = Modifier) {
     Text(
         text,
         style = MaterialTheme.typography.titleMedium,
         fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.padding(top = 10.dp)
+        modifier = modifier.padding(top = 10.dp)
     )
 }
 

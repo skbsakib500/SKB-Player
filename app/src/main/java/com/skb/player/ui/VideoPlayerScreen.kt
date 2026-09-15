@@ -4,10 +4,19 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.media.AudioManager
 import android.net.Uri
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.view.PixelCopy
+import android.view.SurfaceView
+import android.view.TextureView
 import android.view.View
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -21,6 +30,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -33,6 +43,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,11 +59,17 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
+import com.skb.player.library.BookmarkManager
 import com.skb.player.library.HistoryManager
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.io.File
+import java.io.FileOutputStream
 import kotlin.math.abs
 
 private enum class DragMode { NONE, BRIGHTNESS, VOLUME, SEEK }
@@ -64,6 +81,7 @@ private val ASPECTS = listOf(
     AspectRatioFrameLayout.RESIZE_MODE_ZOOM
 )
 private val ASPECT_LABELS = listOf("Fit", "Fill", "Zoom")
+private val SLEEP_OPTIONS = listOf(0, 15, 30, 45, 60)
 
 private const val DOUBLE_TAP_MS = 320L
 private const val DOUBLE_TAP_SLOP = 140f
@@ -72,9 +90,13 @@ private const val CENTER_ZONE = 130f
 @Composable
 fun VideoPlayerScreen(
     player: Player,
-    uri: Uri,
+    uri: Uri?,
+    startFrom: Long,
     history: HistoryManager,
-    onBack: () -> Unit
+    bookmarkManager: BookmarkManager,
+    isQueueMode: Boolean,
+    onBack: () -> Unit,
+    onEnterPip: () -> Unit
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
@@ -82,11 +104,13 @@ fun VideoPlayerScreen(
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     }
     val maxVolume = remember { audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC) }
+    val scope = rememberCoroutineScope()
 
     var locked by remember { mutableStateOf(false) }
     var overlayVisible by remember { mutableStateOf(true) }
     var hudText by remember { mutableStateOf<String?>(null) }
     var hudVisible by remember { mutableStateOf(false) }
+    var inPip by remember { mutableStateOf(false) }
 
     var brightness by remember {
         val cur = activity?.window?.attributes?.screenBrightness ?: -1f
@@ -101,6 +125,8 @@ fun VideoPlayerScreen(
     var position by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(1L) }
     var isPlaying by remember { mutableStateOf(false) }
+    var queueIndex by remember { mutableIntStateOf(1) }
+    var queueTotal by remember { mutableIntStateOf(1) }
 
     var sliderPos by remember { mutableFloatStateOf(0f) }
     var sliderDragging by remember { mutableStateOf(false) }
@@ -114,38 +140,57 @@ fun VideoPlayerScreen(
     var aspectIndex by remember { mutableIntStateOf(0) }
     var rotationLocked by remember { mutableStateOf(false) }
 
+    var showAudioDialog by remember { mutableStateOf(false) }
+    var sleepMenuOpen by remember { mutableStateOf(false) }
+    var sleepEndAt by remember { mutableLongStateOf(0L) }
+    var sleepJob by remember { mutableStateOf<Job?>(null) }
+
+    var showAddBookmark by remember { mutableStateOf(false) }
+    var showBookmarkList by remember { mutableStateOf(false) }
+    var bookmarkRefresh by remember { mutableIntStateOf(0) }
+
+    val pipAvailable = remember {
+        Build.VERSION.SDK_INT >= 26 &&
+        context.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+    }
+
     val subtitlePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { picked -> if (picked != null) subtitleUri = picked }
 
-    // Media setup + subtitle switch (preserves position)
-    DisposableEffect(uri, subtitleUri) {
-        val saved = history.getPosition(uri)
-        val builder = MediaItem.Builder().setUri(uri)
-        subtitleUri?.let { sub ->
-            builder.setSubtitleConfigurations(
-                listOf(
-                    MediaItem.SubtitleConfiguration.Builder(sub)
-                        .setMimeType(detectSubtitleMime(sub))
-                        .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-                        .build()
-                )
-            )
+    // Media setup — only in single-video mode. Queue mode is set by caller.
+    if (!isQueueMode && uri != null) {
+        DisposableEffect(uri, subtitleUri) {
+            try {
+                val builder = MediaItem.Builder().setUri(uri)
+                subtitleUri?.let { sub ->
+                    builder.setSubtitleConfigurations(
+                        listOf(
+                            MediaItem.SubtitleConfiguration.Builder(sub)
+                                .setMimeType(detectSubtitleMime(sub))
+                                .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                                .build()
+                        )
+                    )
+                }
+                player.setMediaItem(builder.build())
+                player.prepare()
+                if (startFrom > 0L) player.seekTo(startFrom)
+                player.play()
+            } catch (_: Exception) {}
+            onDispose { try { player.pause() } catch (_: Exception) {} }
         }
-        player.setMediaItem(builder.build())
-        player.prepare()
-        if (saved > 0L) player.seekTo(saved)
-        player.play()
-        onDispose { player.pause() }
     }
 
-    // Save position on pause / stop
-    DisposableEffect(player, uri) {
+    DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
                 if (!playing) {
-                    val d = player.duration
-                    if (d > 0L) history.savePosition(uri, player.currentPosition, d)
+                    try {
+                        val d = player.duration
+                        val u = player.currentMediaItem?.localConfiguration?.uri
+                        if (d > 0L && u != null) history.savePosition(u, player.currentPosition, d)
+                    } catch (_: Exception) {}
                 }
             }
         }
@@ -160,21 +205,26 @@ fun VideoPlayerScreen(
         onDispose {
             try {
                 val d = player.duration
-                if (d > 0L) history.savePosition(uri, player.currentPosition, d)
+                val u = player.currentMediaItem?.localConfiguration?.uri
+                if (d > 0L && u != null) history.savePosition(u, player.currentPosition, d)
             } catch (_: Exception) {}
             activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             try { activity?.requestedOrientation = originalOrient } catch (_: Exception) {}
         }
     }
 
-    LaunchedEffect(subtitleEnabled) {
-        player.trackSelectionParameters = player.trackSelectionParameters
-            .buildUpon()
-            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !subtitleEnabled)
-            .build()
+    LaunchedEffect(player, subtitleEnabled) {
+        try {
+            player.trackSelectionParameters = player.trackSelectionParameters
+                .buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !subtitleEnabled)
+                .build()
+        } catch (_: Exception) {}
     }
 
-    LaunchedEffect(speedIndex) { player.setPlaybackSpeed(SPEEDS[speedIndex]) }
+    LaunchedEffect(player, speedIndex) {
+        try { player.setPlaybackSpeed(SPEEDS[speedIndex]) } catch (_: Exception) {}
+    }
 
     LaunchedEffect(aspectIndex) { playerViewRef?.resizeMode = ASPECTS[aspectIndex] }
 
@@ -200,19 +250,32 @@ fun VideoPlayerScreen(
                 position = player.currentPosition
                 duration = player.duration.coerceAtLeast(1L)
                 isPlaying = player.isPlaying
+                queueIndex = player.currentMediaItemIndex + 1
+                queueTotal = player.mediaItemCount.coerceAtLeast(1)
                 if (!sliderDragging) sliderPos = position.toFloat()
             } catch (_: Exception) {}
             delay(400)
         }
     }
 
-    LaunchedEffect(player, uri) {
+    LaunchedEffect(player) {
         while (true) {
             delay(3_000)
             try {
                 val d = player.duration
-                if (d > 0L) history.savePosition(uri, player.currentPosition, d)
+                val u = player.currentMediaItem?.localConfiguration?.uri
+                if (d > 0L && u != null) {
+                    history.savePosition(u, player.currentPosition, d)
+                    if (player.isPlaying) history.addWatchMs(u, 3_000L)
+                }
             } catch (_: Exception) {}
+        }
+    }
+
+    LaunchedEffect(activity) {
+        while (true) {
+            inPip = try { activity?.isInPictureInPictureMode == true } catch (_: Exception) { false }
+            delay(250)
         }
     }
 
@@ -226,8 +289,8 @@ fun VideoPlayerScreen(
         }
     }
 
-    LaunchedEffect(overlayVisible) {
-        if (overlayVisible) {
+    LaunchedEffect(overlayVisible, inPip) {
+        if (overlayVisible && !inPip) {
             delay(3500)
             overlayVisible = false
         }
@@ -259,130 +322,125 @@ fun VideoPlayerScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        // ================= Unified gesture layer =================
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(locked) {
-                    if (locked) return@pointerInput
-                    var mode = DragMode.NONE
-                    var startX = 0f
-                    var startY = 0f
-                    var startBrightness = 0f
-                    var startVolume = 0f
-                    var startPos = 0L
-                    var lastTapAt = 0L
-                    var lastTapX = 0f
+        if (!inPip && !locked) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(locked) {
+                        var mode = DragMode.NONE
+                        var startX = 0f
+                        var startY = 0f
+                        var startBrightness = 0f
+                        var startVolume = 0f
+                        var startPos = 0L
+                        var lastTapAt = 0L
+                        var lastTapX = 0f
 
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        startX = down.position.x
-                        startY = down.position.y
-                        startBrightness = brightness
-                        startVolume = volumeFrac
-                        startPos = player.currentPosition
-                        mode = DragMode.NONE
-                        var dragged = false
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            startX = down.position.x
+                            startY = down.position.y
+                            startBrightness = brightness
+                            startVolume = volumeFrac
+                            try { startPos = player.currentPosition } catch (_: Exception) {}
+                            mode = DragMode.NONE
+                            var dragged = false
 
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                            if (change.changedToUp()) {
-                                change.consume()
-                                break
-                            }
-                            if (change.positionChanged()) {
-                                dragged = true
-                                change.consume()
-                                val dx = change.position.x - startX
-                                val dy = change.position.y - startY
-                                if (mode == DragMode.NONE &&
-                                    (abs(dx) > 14f || abs(dy) > 14f)
-                                ) {
-                                    mode = when {
-                                        abs(dx) > abs(dy) -> DragMode.SEEK
-                                        startX < size.width / 2f -> DragMode.BRIGHTNESS
-                                        else -> DragMode.VOLUME
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (change.changedToUp()) { change.consume(); break }
+                                if (change.positionChanged()) {
+                                    dragged = true
+                                    change.consume()
+                                    val dx = change.position.x - startX
+                                    val dy = change.position.y - startY
+                                    if (mode == DragMode.NONE &&
+                                        (abs(dx) > 14f || abs(dy) > 14f)
+                                    ) {
+                                        mode = when {
+                                            abs(dx) > abs(dy) -> DragMode.SEEK
+                                            startX < size.width / 2f -> DragMode.BRIGHTNESS
+                                            else -> DragMode.VOLUME
+                                        }
                                     }
-                                }
-                                when (mode) {
-                                    DragMode.BRIGHTNESS -> {
-                                        brightness =
-                                            (startBrightness - dy / size.height)
-                                                .coerceIn(0.01f, 1f)
-                                        hudText =
-                                            "Brightness ${(brightness * 100).toInt()}%"
-                                    }
-                                    DragMode.VOLUME -> {
-                                        volumeFrac =
-                                            (startVolume - dy / size.height)
-                                                .coerceIn(0f, 1f)
-                                        audioManager.setStreamVolume(
-                                            AudioManager.STREAM_MUSIC,
-                                            (volumeFrac * maxVolume).toInt(),
-                                            0
-                                        )
-                                        hudText =
-                                            "Volume ${(volumeFrac * 100).toInt()}%"
-                                    }
-                                    DragMode.SEEK -> {
-                                        val deltaMs =
-                                            (dx / size.width * 60_000).toLong()
-                                        val target = (startPos + deltaMs)
-                                            .coerceIn(
-                                                0L,
-                                                player.duration.coerceAtLeast(0L)
+                                    when (mode) {
+                                        DragMode.BRIGHTNESS -> {
+                                            brightness =
+                                                (startBrightness - dy / size.height)
+                                                    .coerceIn(0.01f, 1f)
+                                            hudText = "Brightness ${(brightness * 100).toInt()}%"
+                                        }
+                                        DragMode.VOLUME -> {
+                                            volumeFrac =
+                                                (startVolume - dy / size.height)
+                                                    .coerceIn(0f, 1f)
+                                            audioManager.setStreamVolume(
+                                                AudioManager.STREAM_MUSIC,
+                                                (volumeFrac * maxVolume).toInt(), 0
                                             )
-                                        player.seekTo(target)
-                                        hudText = "Seek ${formatTime(target)}"
+                                            hudText = "Volume ${(volumeFrac * 100).toInt()}%"
+                                        }
+                                        DragMode.SEEK -> {
+                                            val deltaMs =
+                                                (dx / size.width * 60_000).toLong()
+                                            try {
+                                                val dur = player.duration.coerceAtLeast(0L)
+                                                val target = (startPos + deltaMs)
+                                                    .coerceIn(0L, dur)
+                                                player.seekTo(target)
+                                                hudText = "Seek ${formatTime(target)}"
+                                            } catch (_: Exception) {}
+                                        }
+                                        DragMode.NONE -> {}
                                     }
-                                    DragMode.NONE -> {}
                                 }
                             }
-                        }
 
-                        if (!dragged) {
-                            val now = System.currentTimeMillis()
-                            val isDouble = (now - lastTapAt) in 1..DOUBLE_TAP_MS &&
-                                    abs(down.position.x - lastTapX) < DOUBLE_TAP_SLOP
-
-                            if (isDouble) {
-                                val cx = size.width / 2f
-                                val x = down.position.x
-                                when {
-                                    x < cx - CENTER_ZONE -> {
-                                        val t = (player.currentPosition - 10_000)
-                                            .coerceAtLeast(0L)
-                                        player.seekTo(t)
-                                        hudText = "<< 10s"
-                                    }
-                                    x > cx + CENTER_ZONE -> {
-                                        val t = (player.currentPosition + 10_000)
-                                            .coerceAtMost(
-                                                player.duration.coerceAtLeast(0L)
-                                            )
-                                        player.seekTo(t)
-                                        hudText = "10s >>"
-                                    }
-                                    else -> {
-                                        if (player.isPlaying) player.pause()
-                                        else player.play()
-                                        hudText =
-                                            if (player.isPlaying) "Playing" else "Paused"
-                                    }
+                            if (!dragged) {
+                                val now = System.currentTimeMillis()
+                                val isDouble = (now - lastTapAt) in 1..DOUBLE_TAP_MS &&
+                                        abs(down.position.x - lastTapX) < DOUBLE_TAP_SLOP
+                                if (isDouble) {
+                                    val cx = size.width / 2f
+                                    val x = down.position.x
+                                    try {
+                                        when {
+                                            x < cx - CENTER_ZONE -> {
+                                                val t = (player.currentPosition - 10_000)
+                                                    .coerceAtLeast(0L)
+                                                player.seekTo(t)
+                                                hudText = "<< 10s"
+                                            }
+                                            x > cx + CENTER_ZONE -> {
+                                                val t = (player.currentPosition + 10_000)
+                                                    .coerceAtMost(
+                                                        player.duration.coerceAtLeast(0L)
+                                                    )
+                                                player.seekTo(t)
+                                                hudText = "10s >>"
+                                            }
+                                            else -> {
+                                                if (player.isPlaying) player.pause()
+                                                else player.play()
+                                                hudText = if (player.isPlaying) "Playing"
+                                                else "Paused"
+                                            }
+                                        }
+                                    } catch (_: Exception) {}
+                                    lastTapAt = 0L
+                                } else {
+                                    lastTapAt = now
+                                    lastTapX = down.position.x
+                                    overlayVisible = !overlayVisible
                                 }
-                                lastTapAt = 0L
-                            } else {
-                                lastTapAt = now
-                                lastTapX = down.position.x
-                                overlayVisible = !overlayVisible
                             }
                         }
                     }
-                }
-        )
+            )
+        }
 
-        if (!locked && overlayVisible) {
+        if (!inPip && !locked && overlayVisible) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -390,18 +448,66 @@ fun VideoPlayerScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 TextButton(onClick = onBack) { Text("Back", color = Color.White) }
+                if (!isQueueMode) {
+                    TextButton(onClick = {
+                        subtitlePicker.launch(arrayOf(
+                            "application/x-subrip", "text/vtt", "text/plain", "*/*"
+                        ))
+                    }) { Text("SUB", color = Color.White) }
+                    TextButton(onClick = { subtitleSize = (subtitleSize + 1) % 3 }) {
+                        val l = when (subtitleSize) { 0 -> "S"; 1 -> "M"; else -> "L" }
+                        Text(l, color = Color.White)
+                    }
+                    TextButton(onClick = { subtitleEnabled = !subtitleEnabled }) {
+                        Text(if (subtitleEnabled) "ON" else "OFF", color = Color.White)
+                    }
+                } else {
+                    Text(
+                        "  \u25B6 Queue  $queueIndex / $queueTotal",
+                        color = Color(0xFF00E5FF),
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 48.dp, start = 4.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = { showAddBookmark = true }) {
+                    Text("\uD83D\uDCCC Add", color = Color(0xFFFFD54F))
+                }
                 TextButton(onClick = {
-                    subtitlePicker.launch(arrayOf(
-                        "application/x-subrip", "text/vtt", "text/plain", "*/*"
-                    ))
-                }) { Text("SUB", color = Color.White) }
-                TextButton(onClick = { subtitleSize = (subtitleSize + 1) % 3 }) {
-                    val l = when (subtitleSize) { 0 -> "S"; 1 -> "M"; else -> "L" }
-                    Text(l, color = Color.White)
+                    bookmarkRefresh++
+                    showBookmarkList = true
+                }) {
+                    val curUri = player.currentMediaItem?.localConfiguration?.uri
+                    val count = if (curUri != null) bookmarkManager.countFor(curUri) else 0
+                    Text("\uD83D\uDCCB Notes ($count)", color = Color(0xFF00E5FF))
                 }
-                TextButton(onClick = { subtitleEnabled = !subtitleEnabled }) {
-                    Text(if (subtitleEnabled) "ON" else "OFF", color = Color.White)
-                }
+                TextButton(onClick = {
+                    captureScreenshot(context, playerViewRef) { result ->
+                        when (result) {
+                            is ShotResult.Ok -> Toast.makeText(
+                                context, "Saved: ${result.path}", Toast.LENGTH_LONG
+                            ).show()
+                            is ShotResult.Error -> Toast.makeText(
+                                context, "Failed: ${result.msg}", Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }
+                }) { Text("\uD83D\uDCF8 Shot", color = Color.White) }
+            }
+
+            if (pipAvailable) {
+                TextButton(
+                    onClick = onEnterPip,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(4.dp)
+                ) { Text("PiP", color = Color.White) }
             }
 
             Column(
@@ -416,34 +522,50 @@ fun VideoPlayerScreen(
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    TextButton(
+                        onClick = {
+                            try { if (player.hasPreviousMediaItem()) player.seekToPreviousMediaItem() } catch (_: Exception) {}
+                        },
+                        enabled = try { player.hasPreviousMediaItem() } catch (_: Exception) { false }
+                    ) { Text("\u23EE", color = Color.White) }
+
                     TextButton(onClick = {
                         speedIndex = (speedIndex + 1) % SPEEDS.size
                         hudText = "Speed ${SPEEDS[speedIndex]}x"
                     }) { Text("${SPEEDS[speedIndex]}x", color = Color.White) }
+
+                    TextButton(onClick = { showAudioDialog = true }) {
+                        Text("Audio", color = Color.White)
+                    }
 
                     TextButton(onClick = {
                         aspectIndex = (aspectIndex + 1) % ASPECTS.size
                         hudText = "Aspect ${ASPECT_LABELS[aspectIndex]}"
                     }) { Text(ASPECT_LABELS[aspectIndex], color = Color.White) }
 
+                    TextButton(
+                        onClick = {
+                            try { if (player.hasNextMediaItem()) player.seekToNextMediaItem() } catch (_: Exception) {}
+                        },
+                        enabled = try { player.hasNextMediaItem() } catch (_: Exception) { false }
+                    ) { Text("\u23ED", color = Color.White) }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     TextButton(onClick = {
                         rotationLocked = !rotationLocked
                         hudText = if (rotationLocked) "Rotation locked"
                         else "Rotation free"
-                    }) { Text(if (rotationLocked) "Lock" else "Free", color = Color.White) }
+                    }) { Text(if (rotationLocked) "Rot Lock" else "Rot Free", color = Color.White) }
 
-                    TextButton(onClick = {
-                        player.repeatMode = when (player.repeatMode) {
-                            Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
-                            Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
-                            else -> Player.REPEAT_MODE_OFF
-                        }
-                        hudText = when (player.repeatMode) {
-                            Player.REPEAT_MODE_OFF -> "Repeat off"
-                            Player.REPEAT_MODE_ALL -> "Repeat all"
-                            else -> "Repeat one"
-                        }
-                    }) { Text("Repeat", color = Color.White) }
+                    TextButton(onClick = { sleepMenuOpen = true }) {
+                        val label = if (sleepEndAt > 0L) "Sleep *" else "Sleep"
+                        Text(label, color = Color.White)
+                    }
                 }
 
                 Slider(
@@ -453,7 +575,7 @@ fun VideoPlayerScreen(
                         sliderDragging = true
                     },
                     onValueChangeFinished = {
-                        player.seekTo(sliderPos.toLong())
+                        try { player.seekTo(sliderPos.toLong()) } catch (_: Exception) {}
                         sliderDragging = false
                     },
                     valueRange = 0f..duration.toFloat()
@@ -464,7 +586,9 @@ fun VideoPlayerScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextButton(onClick = {
-                        if (player.isPlaying) player.pause() else player.play()
+                        try {
+                            if (player.isPlaying) player.pause() else player.play()
+                        } catch (_: Exception) {}
                     }) { Text(if (isPlaying) "Pause" else "Play", color = Color.White) }
                     Text(
                         "${formatTime(position)} / ${formatTime(duration)}",
@@ -474,29 +598,224 @@ fun VideoPlayerScreen(
             }
         }
 
-        TextButton(
-            onClick = {
-                locked = !locked
-                if (!locked) overlayVisible = true
-            },
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(8.dp)
-        ) { Text(if (locked) "LOCKED" else "LOCK", color = Color.White) }
+        if (!inPip) {
+            TextButton(
+                onClick = {
+                    locked = !locked
+                    if (!locked) overlayVisible = true
+                },
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(8.dp)
+            ) { Text(if (locked) "LOCKED" else "LOCK", color = Color.White) }
+        }
 
-        if (hudVisible && hudText != null) {
+        if (!inPip && hudVisible && hudText != null) {
             Box(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .padding(top = 64.dp)
+                    .padding(top = 110.dp)
                     .background(Color(0xCC000000), shape = RoundedCornerShape(8.dp))
                     .padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
-                Text(
-                    text = hudText!!,
-                    color = Color.White,
-                    fontWeight = FontWeight.SemiBold
+                Text(hudText!!, color = Color.White, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+
+    if (showAudioDialog) {
+        AudioTrackDialog(player = player, onDismiss = { showAudioDialog = false })
+    }
+
+    if (sleepMenuOpen) {
+        AlertDialog(
+            onDismissRequest = { sleepMenuOpen = false },
+            title = { Text("Sleep Timer") },
+            text = {
+                Column {
+                    SLEEP_OPTIONS.forEach { min ->
+                        TextButton(onClick = {
+                            sleepJob?.cancel()
+                            if (min == 0) {
+                                sleepEndAt = 0L
+                                sleepJob = null
+                                hudText = "Sleep timer off"
+                            } else {
+                                sleepEndAt = System.currentTimeMillis() + min * 60_000L
+                                sleepJob = scope.launch {
+                                    delay(min * 60_000L)
+                                    try { player.pause() } catch (_: Exception) {}
+                                    sleepEndAt = 0L
+                                }
+                                hudText = "Sleep in ${min}m"
+                            }
+                            sleepMenuOpen = false
+                        }) { Text(if (min == 0) "Off" else "$min minutes") }
+                    }
+                }
+            },
+            confirmButton = {}
+        )
+    }
+
+    if (showAddBookmark) {
+        AddBookmarkDialog(
+            positionMs = position,
+            onDismiss = { showAddBookmark = false },
+            onSave = { note ->
+                try {
+                    val curUri = player.currentMediaItem?.localConfiguration?.uri
+                    if (curUri != null) {
+                        bookmarkManager.add(curUri, position, note)
+                        hudText = "Bookmark saved"
+                    }
+                } catch (_: Exception) {}
+            }
+        )
+    }
+
+    if (showBookmarkList) {
+        key(bookmarkRefresh) {
+            val curUri = player.currentMediaItem?.localConfiguration?.uri
+            val list = remember(curUri) {
+                if (curUri != null) bookmarkManager.listFor(curUri) else emptyList()
+            }
+            BookmarksListDialog(
+                bookmarks = list,
+                onDismiss = { showBookmarkList = false },
+                onJump = { ms -> try { player.seekTo(ms) } catch (_: Exception) {} },
+                onDelete = { id ->
+                    bookmarkManager.remove(id)
+                    bookmarkRefresh++
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun AudioTrackDialog(player: Player, onDismiss: () -> Unit) {
+    val groups = try {
+        player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+    } catch (_: Exception) { emptyList() }
+    val group = groups.firstOrNull()
+
+    if (group == null) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Audio Track") },
+            text = { Text("No alternate audio tracks available.") },
+            confirmButton = {
+                TextButton(onClick = onDismiss) { Text("OK") }
+            }
+        )
+        return
+    }
+
+    val trackGroup = group.mediaTrackGroup
+    val currentOverride = try {
+        player.trackSelectionParameters.overrides[trackGroup]
+    } catch (_: Exception) { null }
+    val selectedIndex = currentOverride?.trackIndices?.firstOrNull() ?: -1
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Audio Track") },
+        text = {
+            Column {
+                for (i in 0 until group.length) {
+                    val format = group.getTrackFormat(i)
+                    val label = format.label ?: format.language ?: "Track ${i + 1}"
+                    val prefix = if (i == selectedIndex) "\u25CF " else "\u25CB "
+                    TextButton(onClick = {
+                        try {
+                            player.trackSelectionParameters = player
+                                .trackSelectionParameters
+                                .buildUpon()
+                                .setOverrideForType(
+                                    TrackSelectionOverride(trackGroup, i)
+                                )
+                                .build()
+                        } catch (_: Exception) {}
+                        onDismiss()
+                    }) { Text(prefix + label) }
+                }
+            }
+        },
+        confirmButton = {}
+    )
+}
+
+private sealed class ShotResult {
+    data class Ok(val path: String) : ShotResult()
+    data class Error(val msg: String) : ShotResult()
+}
+
+private fun captureScreenshot(
+    context: Context,
+    playerViewRef: PlayerView?,
+    onResult: (ShotResult) -> Unit
+) {
+    val pv = playerViewRef ?: run {
+        onResult(ShotResult.Error("Player not ready"))
+        return
+    }
+    val targetView: View = pv.videoSurfaceView ?: pv
+    val w = targetView.width
+    val h = targetView.height
+    if (w <= 0 || h <= 0) {
+        onResult(ShotResult.Error("Video not visible"))
+        return
+    }
+
+    val saveBitmap: (Bitmap) -> Unit = { bmp ->
+        try {
+            val dir = File(context.getExternalFilesDir(null), "screenshots")
+            dir.mkdirs()
+            val file = File(dir, "SKB_${System.currentTimeMillis()}.png")
+            FileOutputStream(file).use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            onResult(ShotResult.Ok(file.absolutePath))
+        } catch (e: Exception) {
+            onResult(ShotResult.Error(e.message ?: "save failed"))
+        }
+    }
+
+    when (targetView) {
+        is SurfaceView -> {
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            try {
+                PixelCopy.request(
+                    targetView,
+                    bmp,
+                    { result ->
+                        if (result == PixelCopy.SUCCESS) saveBitmap(bmp)
+                        else onResult(ShotResult.Error("PixelCopy $result"))
+                    },
+                    Handler(Looper.getMainLooper())
                 )
+            } catch (e: Exception) {
+                onResult(ShotResult.Error(e.message ?: "PixelCopy fail"))
+            }
+        }
+        is TextureView -> {
+            val bmp = try { targetView.bitmap } catch (_: Exception) { null }
+            if (bmp != null) saveBitmap(bmp)
+            else onResult(ShotResult.Error("TextureView bitmap null"))
+        }
+        else -> {
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            try {
+                PixelCopy.request(
+                    pv,
+                    bmp,
+                    { result ->
+                        if (result == PixelCopy.SUCCESS) saveBitmap(bmp)
+                        else onResult(ShotResult.Error("PixelCopy $result"))
+                    },
+                    Handler(Looper.getMainLooper())
+                )
+            } catch (e: Exception) {
+                onResult(ShotResult.Error(e.message ?: "PixelCopy fail"))
             }
         }
     }

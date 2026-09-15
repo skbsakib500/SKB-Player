@@ -40,10 +40,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
+import androidx.media3.common.MediaItem
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.skb.player.library.BookmarkManager
 import com.skb.player.library.HistoryManager
+import com.skb.player.library.VideoItem
+import com.skb.player.ui.HistoryScreen
 import com.skb.player.ui.HomeScaffold
 import com.skb.player.ui.VideoPlayerScreen
 
@@ -105,9 +108,12 @@ private fun MainContent(
     val context = LocalContext.current
     var pickedUri by remember { mutableStateOf<Uri?>(null) }
     var startFrom by remember { mutableLongStateOf(0L) }
+    var queueMode by remember { mutableStateOf(false) }
+    var showPlayer by remember { mutableStateOf(false) }
     var pendingUri by remember { mutableStateOf<Uri?>(null) }
     var pendingPos by remember { mutableLongStateOf(0L) }
     var tab by remember { mutableIntStateOf(0) }
+    var showHistory by remember { mutableStateOf(false) }
     var lastBackAt by remember { mutableLongStateOf(0L) }
 
     val notifPerm = rememberLauncherForActivityResult(
@@ -125,10 +131,13 @@ private fun MainContent(
 
     BackHandler {
         when {
-            pickedUri != null -> {
+            showPlayer -> {
                 try { controller.pause() } catch (_: Exception) {}
+                showPlayer = false
+                queueMode = false
                 pickedUri = null
             }
+            showHistory -> showHistory = false
             tab != 0 -> tab = 0
             else -> {
                 val now = System.currentTimeMillis()
@@ -144,7 +153,7 @@ private fun MainContent(
         }
     }
 
-    fun openVideo(uri: Uri) {
+    fun openSingleVideo(uri: Uri) {
         val saved = try { history.getPosition(uri) } catch (_: Exception) { 0L }
         if (saved > 30_000L) {
             pendingPos = saved
@@ -152,45 +161,80 @@ private fun MainContent(
         } else {
             startFrom = 0L
             pickedUri = uri
+            queueMode = false
+            showPlayer = true
+        }
+    }
+
+    fun playAll(videos: List<VideoItem>) {
+        if (videos.isEmpty()) return
+        try {
+            val items = videos.map { MediaItem.fromUri(it.uri) }
+            controller.setMediaItems(items, 0, 0L)
+            controller.prepare()
+            controller.play()
+            pickedUri = videos.first().uri
+            startFrom = 0L
+            queueMode = true
+            showPlayer = true
+        } catch (e: Exception) {
+            Toast.makeText(context, "Queue failed: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
-    ) { uri -> if (uri != null) openVideo(uri) }
+    ) { uri -> if (uri != null) openSingleVideo(uri) }
 
-    val current = pickedUri
-    if (current == null) {
-        HomeScaffold(
-            history = history,
-            tab = tab,
-            onTabChange = { tab = it },
-            onOpenVideo = { openVideo(it) },
-            onPickVideo = { picker.launch(arrayOf("video/*")) }
-        )
-    } else {
-        VideoPlayerScreen(
-            player = controller,
-            uri = current,
-            startFrom = startFrom,
-            history = history,
-            bookmarkManager = bookmarks,
-            onBack = {
-                try { controller.pause() } catch (_: Exception) {}
-                pickedUri = null
-            },
-            onEnterPip = {
-                val act = context.findActivity() ?: return@VideoPlayerScreen
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    try {
-                        val params = PictureInPictureParams.Builder()
-                            .setAspectRatio(Rational(16, 9))
-                            .build()
-                        act.enterPictureInPictureMode(params)
-                    } catch (_: Exception) {}
+    when {
+        showPlayer -> {
+            VideoPlayerScreen(
+                player = controller,
+                uri = pickedUri,
+                startFrom = startFrom,
+                history = history,
+                bookmarkManager = bookmarks,
+                isQueueMode = queueMode,
+                onBack = {
+                    try { controller.pause() } catch (_: Exception) {}
+                    showPlayer = false
+                    queueMode = false
+                    pickedUri = null
+                },
+                onEnterPip = {
+                    val act = context.findActivity() ?: return@VideoPlayerScreen
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        try {
+                            val params = PictureInPictureParams.Builder()
+                                .setAspectRatio(Rational(16, 9))
+                                .build()
+                            act.enterPictureInPictureMode(params)
+                        } catch (_: Exception) {}
+                    }
                 }
-            }
-        )
+            )
+        }
+        showHistory -> {
+            HistoryScreen(
+                history = history,
+                onBack = { showHistory = false },
+                onOpenVideo = { uri ->
+                    showHistory = false
+                    openSingleVideo(uri)
+                }
+            )
+        }
+        else -> {
+            HomeScaffold(
+                history = history,
+                tab = tab,
+                onTabChange = { tab = it },
+                onOpenVideo = { openSingleVideo(it) },
+                onPickVideo = { picker.launch(arrayOf("video/*")) },
+                onPlayAll = { playAll(it) },
+                onOpenHistory = { showHistory = true }
+            )
+        }
     }
 
     pendingUri?.let { uri ->
@@ -198,14 +242,18 @@ private fun MainContent(
             onDismissRequest = {
                 startFrom = 0L
                 pickedUri = uri
+                queueMode = false
+                showPlayer = true
                 pendingUri = null
             },
             title = { Text("Resume Playback?") },
-            text = { Text("Continue from ${fmtTime(uri)}?") },
+            text = { Text("Continue from ${fmtTime(pendingPos)}?") },
             confirmButton = {
                 TextButton(onClick = {
                     startFrom = pendingPos
                     pickedUri = uri
+                    queueMode = false
+                    showPlayer = true
                     pendingUri = null
                 }) { Text("Resume") }
             },
@@ -213,6 +261,8 @@ private fun MainContent(
                 TextButton(onClick = {
                     startFrom = 0L
                     pickedUri = uri
+                    queueMode = false
+                    showPlayer = true
                     pendingUri = null
                 }) { Text("Start Over") }
             }
