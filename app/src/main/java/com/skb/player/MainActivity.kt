@@ -56,8 +56,12 @@ import com.skb.player.ui.SKBTheme
 import com.skb.player.ui.SearchScreen
 import com.skb.player.ui.VideoPlayerScreen
 import com.skb.player.ui.themeColors
+import kotlinx.coroutines.flow.MutableStateFlow
+import androidx.compose.runtime.collectAsState
 
 class MainActivity : ComponentActivity() {
+
+    private val incomingUri = MutableStateFlow<android.net.Uri?>(null)
 
     private lateinit var history: HistoryManager
     private lateinit var bookmarks: BookmarkManager
@@ -68,6 +72,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleIntent(intent)
         history = HistoryManager(this)
         bookmarks = BookmarkManager(this)
         settings = SettingsManager(this)
@@ -107,6 +112,7 @@ class MainActivity : ComponentActivity() {
                             CircularProgressIndicator()
                         }
                     } else {
+                        val extUri by incomingUri.collectAsState()
                         MainContent(
                             controller = ctrl,
                             history = history,
@@ -116,6 +122,8 @@ class MainActivity : ComponentActivity() {
                             playlists = playlists,
                             equalizer = equalizer,
                             theme = theme,
+                            externalUri = extUri,
+                            onExternalUriConsumed = { incomingUri.value = null },
                             onThemeChange = {
                                 settings.themeIndex = it
                                 themeIdx = it
@@ -123,6 +131,26 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        if (intent == null) return
+        when (intent.action) {
+            Intent.ACTION_VIEW -> {
+                intent.data?.let { incomingUri.value = it }
+            }
+            Intent.ACTION_SEND -> {
+                @Suppress("DEPRECATION")
+                val uri = intent.getParcelableExtra<android.net.Uri>(Intent.EXTRA_STREAM)
+                if (uri != null) incomingUri.value = uri
             }
         }
     }
@@ -143,6 +171,8 @@ private fun MainContent(
     playlists: PlaylistManager,
     equalizer: EqualizerManager,
     theme: SKBTheme,
+    externalUri: android.net.Uri?,
+    onExternalUriConsumed: () -> Unit,
     onThemeChange: (Int) -> Unit
 ) {
     val context = LocalContext.current
@@ -168,6 +198,14 @@ private fun MainContent(
             ) == PackageManager.PERMISSION_GRANTED
             if (!granted) notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
+    }
+
+    LaunchedEffect(externalUri) {
+        val u = externalUri ?: return@LaunchedEffect
+        try {
+            openSingleVideo(u)
+        } catch (_: Exception) {}
+        onExternalUriConsumed()
     }
 
     BackHandler {
