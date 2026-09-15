@@ -59,7 +59,7 @@ import kotlinx.coroutines.withContext
 enum class SKBTab(val emoji: String, val label: String) {
     HOME("\uD83C\uDFE0", "Home"),
     VIDEOS("\uD83C\uDFAC", "Videos"),
-    MUSIC("\uD83C\uDFB5", "Music"),
+    FOLDERS("\uD83D\uDCC1", "Folders"),
     SETTINGS("\u2699", "Settings")
 }
 
@@ -106,7 +106,9 @@ fun HomeScaffold(
 
     LaunchedEffect(hasPermission) {
         if (hasPermission) {
-            libraryVideos = withContext(Dispatchers.IO) { MediaScanner.scanVideos(context) }
+            libraryVideos = withContext(Dispatchers.IO) {
+                MediaScanner.scanVideos(context, 2000)
+            }
         }
     }
 
@@ -145,10 +147,19 @@ fun HomeScaffold(
                     onOpenVideo, onPickVideo, onPlayAll, onOpenSearch,
                     onCycleSort = { sortMode = (sortMode + 1) % SortMode.entries.size }
                 ) { permLauncher.launch(requiredPerms()) }
-                2 -> PlaceholderTab(
-                    "\uD83C\uDFB5 Music",
-                    "Background playback, playlists, equalizer \u2014 coming soon"
-                )
+                2 -> if (hasPermission) {
+                    FolderScreen(allVideos = libraryVideos, onOpenVideo = onOpenVideo)
+                } else {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Library access required")
+                            Spacer(Modifier.height(8.dp))
+                            Button(onClick = { permLauncher.launch(requiredPerms()) }) {
+                                Text("Grant Access")
+                            }
+                        }
+                    }
+                }
                 else -> SettingsTabContent(settings)
             }
         }
@@ -206,11 +217,9 @@ private fun HomeTab(
 
         item {
             Spacer(Modifier.height(20.dp))
-            Button(
-                onClick = onPickVideo,
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Pick Video from Storage") }
-            Spacer(Modifier.height(12.dp))
+            Button(onClick = onPickVideo, modifier = Modifier.fillMaxWidth()) {
+                Text("Pick Video from Storage")
+            }
         }
     }
 }
@@ -266,7 +275,7 @@ private fun VideosTab(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "${libraryVideos.size} videos  \u2022  Sorted: ${sortMode.label}",
+                        "${libraryVideos.size} videos  \u2022  ${sortMode.label}",
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFF888888),
                         modifier = Modifier.weight(1f)
@@ -280,19 +289,6 @@ private fun VideosTab(
                 LibraryCard(v) { onOpenVideo(v.uri) }
             }
         }
-    }
-}
-
-@Composable
-private fun PlaceholderTab(title: String, message: String) {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(8.dp))
-        Text(message, style = MaterialTheme.typography.bodyMedium)
     }
 }
 

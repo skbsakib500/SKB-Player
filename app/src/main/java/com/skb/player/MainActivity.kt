@@ -90,10 +90,9 @@ class MainActivity : ComponentActivity() {
 
                     val ctrl = controller
                     if (ctrl == null) {
-                        Box(
-                            Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center
-                        ) { CircularProgressIndicator() }
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
                     } else {
                         MainContent(ctrl, history, bookmarks, settings)
                     }
@@ -222,68 +221,47 @@ private fun MainContent(
                 }
             )
         }
-        showSearch -> {
-            SearchScreen(
-                history = history,
-                onBack = { showSearch = false },
-                onOpenVideo = { uri ->
-                    showSearch = false
-                    openSingleVideo(uri)
-                }
-            )
-        }
-        showHistory -> {
-            HistoryScreen(
-                history = history,
-                onBack = { showHistory = false },
-                onOpenVideo = { uri ->
-                    showHistory = false
-                    openSingleVideo(uri)
-                }
-            )
-        }
-        else -> {
-            HomeScaffold(
-                history = history,
-                settings = settings,
-                tab = tab,
-                onTabChange = { tab = it },
-                onOpenVideo = { openSingleVideo(it) },
-                onPickVideo = { picker.launch(arrayOf("video/*")) },
-                onPlayAll = { playAll(it) },
-                onOpenHistory = { showHistory = true },
-                onOpenSearch = { showSearch = true }
-            )
-        }
+        showSearch -> SearchScreen(
+            history = history,
+            onBack = { showSearch = false },
+            onOpenVideo = { uri -> showSearch = false; openSingleVideo(uri) }
+        )
+        showHistory -> HistoryScreen(
+            history = history,
+            onBack = { showHistory = false },
+            onOpenVideo = { uri -> showHistory = false; openSingleVideo(uri) }
+        )
+        else -> HomeScaffold(
+            history = history,
+            settings = settings,
+            tab = tab,
+            onTabChange = { tab = it },
+            onOpenVideo = { openSingleVideo(it) },
+            onPickVideo = { picker.launch(arrayOf("video/*")) },
+            onPlayAll = { playAll(it) },
+            onOpenHistory = { showHistory = true },
+            onOpenSearch = { showSearch = true }
+        )
     }
 
     pendingUri?.let { uri ->
         AlertDialog(
             onDismissRequest = {
-                startFrom = 0L
-                pickedUri = uri
-                queueMode = false
-                showPlayer = true
-                pendingUri = null
+                startFrom = 0L; pickedUri = uri; queueMode = false
+                showPlayer = true; pendingUri = null
             },
             title = { Text("Resume Playback?") },
             text = { Text("Continue from ${fmtTime(pendingPos)}?") },
             confirmButton = {
                 TextButton(onClick = {
-                    startFrom = pendingPos
-                    pickedUri = uri
-                    queueMode = false
-                    showPlayer = true
-                    pendingUri = null
+                    startFrom = pendingPos; pickedUri = uri
+                    queueMode = false; showPlayer = true; pendingUri = null
                 }) { Text("Resume") }
             },
             dismissButton = {
                 TextButton(onClick = {
-                    startFrom = 0L
-                    pickedUri = uri
-                    queueMode = false
-                    showPlayer = true
-                    pendingUri = null
+                    startFrom = 0L; pickedUri = uri
+                    queueMode = false; showPlayer = true; pendingUri = null
                 }) { Text("Start Over") }
             }
         )

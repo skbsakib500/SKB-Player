@@ -24,6 +24,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -52,6 +54,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
@@ -163,7 +166,10 @@ fun VideoPlayerScreen(
     var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
     var speedIndex by remember { mutableIntStateOf(settings.defaultSpeedIndex) }
     var aspectIndex by remember { mutableIntStateOf(0) }
-    var rotationLocked by remember { mutableStateOf(false) }
+    var rotationMode by remember { mutableIntStateOf(0) } // 0=Auto 1=Landscape 2=Portrait
+    var zoom by remember { mutableFloatStateOf(1f) }
+    var zoomOffsetX by remember { mutableFloatStateOf(0f) }
+    var zoomOffsetY by remember { mutableFloatStateOf(0f) }
 
     var showAudioDialog by remember { mutableStateOf(false) }
     var showSubDialog by remember { mutableStateOf(false) }
@@ -264,11 +270,13 @@ fun VideoPlayerScreen(
 
     LaunchedEffect(aspectIndex) { playerViewRef?.resizeMode = ASPECTS[aspectIndex] }
 
-    LaunchedEffect(rotationLocked) {
+    LaunchedEffect(rotationMode) {
         try {
-            activity?.requestedOrientation = if (rotationLocked)
-                ActivityInfo.SCREEN_ORIENTATION_LOCKED
-            else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            activity?.requestedOrientation = when (rotationMode) {
+                1 -> ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                2 -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
         } catch (_: Exception) {}
     }
 
@@ -376,7 +384,14 @@ fun VideoPlayerScreen(
                     }
                 }
             },
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer(
+                    scaleX = zoom,
+                    scaleY = zoom,
+                    translationX = zoomOffsetX,
+                    translationY = zoomOffsetY
+                )
         )
 
         if (!inPip && !locked) {
@@ -613,10 +628,20 @@ fun VideoPlayerScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextButton(onClick = {
-                        rotationLocked = !rotationLocked
-                        hudText = if (rotationLocked) "Rotation locked"
-                        else "Rotation free"
-                    }) { Text(if (rotationLocked) "Rot Lock" else "Rot Free", color = Color.White) }
+                        rotationMode = (rotationMode + 1) % 3
+                        hudText = when (rotationMode) {
+                            1 -> "Rotate: Landscape"
+                            2 -> "Rotate: Portrait"
+                            else -> "Rotate: Auto"
+                        }
+                    }) {
+                        val label = when (rotationMode) {
+                            1 -> "Landscape"
+                            2 -> "Portrait"
+                            else -> "Auto Rot"
+                        }
+                        Text(label, color = Color.White)
+                    }
 
                     TextButton(onClick = { sleepMenuOpen = true }) {
                         val label = if (sleepEndAt > 0L) "Sleep *" else "Sleep"
@@ -655,15 +680,27 @@ fun VideoPlayerScreen(
         }
 
         if (!inPip) {
-            TextButton(
-                onClick = {
-                    locked = !locked
-                    if (!locked) overlayVisible = true
-                },
+            Column(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
-                    .padding(8.dp)
-            ) { Text(if (locked) "LOCKED" else "LOCK", color = Color.White) }
+                    .padding(8.dp),
+                horizontalAlignment = Alignment.End
+            ) {
+                TextButton(
+                    onClick = {
+                        locked = !locked
+                        if (!locked) overlayVisible = true
+                    }
+                ) { Text(if (locked) "LOCKED" else "LOCK", color = Color.White) }
+                if (zoom > 1.01f) {
+                    TextButton(onClick = {
+                        zoom = 1f
+                        zoomOffsetX = 0f
+                        zoomOffsetY = 0f
+                        hudText = "Zoom reset"
+                    }) { Text("${"%.1f".format(zoom)}x ↺", color = Color(0xFF00E5FF)) }
+                }
+            }
         }
 
         if (!inPip && hudVisible && hudText != null) {
