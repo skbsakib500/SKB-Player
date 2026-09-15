@@ -3,9 +3,11 @@ package com.skb.player.ui
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.pm.ActivityInfo
 import android.media.AudioManager
 import android.net.Uri
 import android.view.View
+import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -44,17 +46,28 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
+import com.skb.player.library.HistoryManager
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 
 private enum class DragMode { NONE, BRIGHTNESS, VOLUME, SEEK }
 
+private val SPEEDS = listOf(0.5f, 1.0f, 1.25f, 1.5f, 2.0f)
+private val ASPECTS = listOf(
+    AspectRatioFrameLayout.RESIZE_MODE_FIT,
+    AspectRatioFrameLayout.RESIZE_MODE_FILL,
+    AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+)
+private val ASPECT_LABELS = listOf("Fit", "Fill", "Zoom")
+
 @Composable
 fun VideoPlayerScreen(
     player: ExoPlayer,
     uri: Uri,
+    history: HistoryManager,
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
@@ -86,27 +99,27 @@ fun VideoPlayerScreen(
     var sliderPos by remember { mutableFloatStateOf(0f) }
     var sliderDragging by remember { mutableStateOf(false) }
 
-    // ---- Subtitle state ----
     var subtitleUri by remember { mutableStateOf<Uri?>(null) }
     var subtitleEnabled by remember { mutableStateOf(true) }
-    var subtitleSize by remember { mutableIntStateOf(1) } // 0=S, 1=M, 2=L
+    var subtitleSize by remember { mutableIntStateOf(1) }
+
+    var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
+    var speedIndex by remember { mutableIntStateOf(1) }
+    var aspectIndex by remember { mutableIntStateOf(0) }
+    var rotationLocked by remember { mutableStateOf(false) }
 
     val subtitlePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { picked ->
-        if (picked != null) subtitleUri = picked
-    }
+        ActivityResultContracts.OpenDocument()
+    ) { picked -> if (picked != null) subtitleUri = picked }
 
     DisposableEffect(uri, subtitleUri) {
-        val savedPos = if (player.currentMediaItem != null) player.currentPosition else 0L
-        val wasPlaying = player.isPlaying
+        val saved = history.getPosition(uri)
         val builder = MediaItem.Builder().setUri(uri)
         subtitleUri?.let { sub ->
-            val mime = detectSubtitleMime(sub)
             builder.setSubtitleConfigurations(
                 listOf(
                     MediaItem.SubtitleConfiguration.Builder(sub)
-                        .setMimeType(mime)
+                        .setMimeType(detectSubtitleMime(sub))
                         .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
                         .build()
                 )
@@ -114,9 +127,25 @@ fun VideoPlayerScreen(
         }
         player.setMediaItem(builder.build())
         player.prepare()
-        if (savedPos > 0L) player.seekTo(savedPos)
-        if (wasPlaying || savedPos == 0L) player.play()
+        if (saved > 0L) player.seekTo(saved)
+        player.play()
         onDispose { player.pause() }
+    }
+
+    DisposableEffect(Unit) {
+        activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        val originalOrient = activity?.requestedOrientation
+            ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        onDispose {
+            history.savePosition(
+                uri,
+                player.currentPosition,
+                player.duration.coerceAtLeast(0L)
+            )
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            activity?.requestedOrientation = originalOrient
+        }
     }
 
     LaunchedEffect(subtitleEnabled) {
@@ -124,6 +153,20 @@ fun VideoPlayerScreen(
             .buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !subtitleEnabled)
             .build()
+    }
+
+    LaunchedEffect(speedIndex) {
+        player.setPlaybackSpeed(SPEEDS[speedIndex])
+    }
+
+    LaunchedEffect(aspectIndex) {
+        playerViewRef?.resizeMode = ASPECTS[aspectIndex]
+    }
+
+    LaunchedEffect(rotationLocked) {
+        activity?.requestedOrientation = if (rotationLocked)
+            ActivityInfo.SCREEN_ORIENTATION_LOCKED
+        else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     }
 
     LaunchedEffect(brightness) {
@@ -134,17 +177,6 @@ fun VideoPlayerScreen(
         }
     }
 
-    DisposableEffect(Unit) {
-        val original = activity?.window?.attributes?.screenBrightness ?: -1f
-        onDispose {
-            activity?.window?.let { w ->
-                val lp = w.attributes
-                lp.screenBrightness = original
-                w.attributes = lp
-            }
-        }
-    }
-
     LaunchedEffect(player) {
         while (true) {
             position = player.currentPosition
@@ -152,6 +184,15 @@ fun VideoPlayerScreen(
             isPlaying = player.isPlaying
             if (!sliderDragging) sliderPos = position.toFloat()
             delay(400)
+        }
+    }
+
+    LaunchedEffect(player) {
+        while (true) {
+            delay(5_000)
+            if (player.duration > 0) {
+                history.savePosition(uri, player.currentPosition, player.duration)
+            }
         }
     }
 
@@ -183,6 +224,8 @@ fun VideoPlayerScreen(
                     this.player = player
                     useController = false
                     setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
+                    resizeMode = ASPECTS[aspectIndex]
+                    playerViewRef = this
                 }
             },
             update = { view ->
@@ -286,28 +329,15 @@ fun VideoPlayerScreen(
                     .padding(4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TextButton(onClick = onBack) {
-                    Text("Back", color = Color.White)
-                }
+                TextButton(onClick = onBack) { Text("Back", color = Color.White) }
                 TextButton(onClick = {
-                    subtitlePicker.launch(
-                        arrayOf(
-                            "application/x-subrip",
-                            "text/vtt",
-                            "text/plain",
-                            "*/*"
-                        )
-                    )
-                }) {
-                    Text("SUB", color = Color.White)
-                }
+                    subtitlePicker.launch(arrayOf(
+                        "application/x-subrip", "text/vtt", "text/plain", "*/*"
+                    ))
+                }) { Text("SUB", color = Color.White) }
                 TextButton(onClick = { subtitleSize = (subtitleSize + 1) % 3 }) {
-                    val label = when (subtitleSize) {
-                        0 -> "S"
-                        1 -> "M"
-                        else -> "L"
-                    }
-                    Text(label, color = Color.White)
+                    val l = when (subtitleSize) { 0 -> "S"; 1 -> "M"; else -> "L" }
+                    Text(l, color = Color.White)
                 }
                 TextButton(onClick = { subtitleEnabled = !subtitleEnabled }) {
                     Text(if (subtitleEnabled) "ON" else "OFF", color = Color.White)
@@ -321,6 +351,42 @@ fun VideoPlayerScreen(
                     .background(Color(0x88000000))
                     .padding(12.dp)
             ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = {
+                        speedIndex = (speedIndex + 1) % SPEEDS.size
+                        hudText = "Speed ${SPEEDS[speedIndex]}x"
+                    }) { Text("${SPEEDS[speedIndex]}x", color = Color.White) }
+
+                    TextButton(onClick = {
+                        aspectIndex = (aspectIndex + 1) % ASPECTS.size
+                        hudText = "Aspect ${ASPECT_LABELS[aspectIndex]}"
+                    }) { Text(ASPECT_LABELS[aspectIndex], color = Color.White) }
+
+                    TextButton(onClick = {
+                        rotationLocked = !rotationLocked
+                        hudText = if (rotationLocked) "Rotation locked" else "Rotation free"
+                    }) { Text(if (rotationLocked) "Lock" else "Free", color = Color.White) }
+
+                    TextButton(onClick = {
+                        player.repeatMode = when (player.repeatMode) {
+                            androidx.media3.common.Player.REPEAT_MODE_OFF ->
+                                androidx.media3.common.Player.REPEAT_MODE_ALL
+                            androidx.media3.common.Player.REPEAT_MODE_ALL ->
+                                androidx.media3.common.Player.REPEAT_MODE_ONE
+                            else -> androidx.media3.common.Player.REPEAT_MODE_OFF
+                        }
+                        hudText = when (player.repeatMode) {
+                            androidx.media3.common.Player.REPEAT_MODE_OFF -> "Repeat off"
+                            androidx.media3.common.Player.REPEAT_MODE_ALL -> "Repeat all"
+                            else -> "Repeat one"
+                        }
+                    }) { Text("Repeat", color = Color.White) }
+                }
+
                 Slider(
                     value = sliderPos,
                     onValueChange = {
@@ -340,9 +406,7 @@ fun VideoPlayerScreen(
                 ) {
                     TextButton(onClick = {
                         if (player.isPlaying) player.pause() else player.play()
-                    }) {
-                        Text(if (isPlaying) "Pause" else "Play", color = Color.White)
-                    }
+                    }) { Text(if (isPlaying) "Pause" else "Play", color = Color.White) }
                     Text(
                         "${formatTime(position)} / ${formatTime(duration)}",
                         color = Color.White
@@ -359,9 +423,7 @@ fun VideoPlayerScreen(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
                 .padding(8.dp)
-        ) {
-            Text(if (locked) "LOCKED" else "LOCK", color = Color.White)
-        }
+        ) { Text(if (locked) "LOCKED" else "LOCK", color = Color.White) }
 
         if (hudVisible && hudText != null) {
             Box(
