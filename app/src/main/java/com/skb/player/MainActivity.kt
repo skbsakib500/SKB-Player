@@ -2,6 +2,7 @@ package com.skb.player
 
 import android.Manifest
 import android.app.Activity
+import android.app.PictureInPictureParams
 import android.content.ComponentName
 import android.content.Context
 import android.content.ContextWrapper
@@ -9,6 +10,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Rational
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -17,9 +19,12 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -65,9 +70,7 @@ class MainActivity : ComponentActivity() {
                         )
                         val future = MediaController.Builder(context, token).buildAsync()
                         future.addListener({
-                            try {
-                                controller = future.get()
-                            } catch (_: Exception) {}
+                            try { controller = future.get() } catch (_: Exception) {}
                         }, ContextCompat.getMainExecutor(context))
                         onDispose {
                             MediaController.releaseFuture(future)
@@ -94,6 +97,9 @@ class MainActivity : ComponentActivity() {
 private fun MainContent(controller: MediaController, history: HistoryManager) {
     val context = LocalContext.current
     var pickedUri by remember { mutableStateOf<Uri?>(null) }
+    var startFrom by remember { mutableLongStateOf(0L) }
+    var pendingUri by remember { mutableStateOf<Uri?>(null) }
+    var pendingPos by remember { mutableLongStateOf(0L) }
     var tab by remember { mutableIntStateOf(0) }
     var lastBackAt by remember { mutableLongStateOf(0L) }
 
@@ -113,7 +119,7 @@ private fun MainContent(controller: MediaController, history: HistoryManager) {
     BackHandler {
         when {
             pickedUri != null -> {
-                controller.pause()
+                try { controller.pause() } catch (_: Exception) {}
                 pickedUri = null
             }
             tab != 0 -> tab = 0
@@ -131,9 +137,20 @@ private fun MainContent(controller: MediaController, history: HistoryManager) {
         }
     }
 
+    fun openVideo(uri: Uri) {
+        val saved = try { history.getPosition(uri) } catch (_: Exception) { 0L }
+        if (saved > 30_000L) {
+            pendingPos = saved
+            pendingUri = uri
+        } else {
+            startFrom = 0L
+            pickedUri = uri
+        }
+    }
+
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
-    ) { uri -> if (uri != null) pickedUri = uri }
+    ) { uri -> if (uri != null) openVideo(uri) }
 
     val current = pickedUri
     if (current == null) {
@@ -141,17 +158,55 @@ private fun MainContent(controller: MediaController, history: HistoryManager) {
             history = history,
             tab = tab,
             onTabChange = { tab = it },
-            onOpenVideo = { pickedUri = it },
+            onOpenVideo = { openVideo(it) },
             onPickVideo = { picker.launch(arrayOf("video/*")) }
         )
     } else {
         VideoPlayerScreen(
             player = controller,
             uri = current,
+            startFrom = startFrom,
             history = history,
             onBack = {
-                controller.pause()
+                try { controller.pause() } catch (_: Exception) {}
                 pickedUri = null
+            },
+            onEnterPip = {
+                val act = context.findActivity() ?: return@VideoPlayerScreen
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    try {
+                        val params = PictureInPictureParams.Builder()
+                            .setAspectRatio(Rational(16, 9))
+                            .build()
+                        act.enterPictureInPictureMode(params)
+                    } catch (_: Exception) {}
+                }
+            }
+        )
+    }
+
+    pendingUri?.let { uri ->
+        AlertDialog(
+            onDismissRequest = {
+                startFrom = 0L
+                pickedUri = uri
+                pendingUri = null
+            },
+            title = { Text("Resume Playback?") },
+            text = { Text("Continue from ${fmtTime(pendingPos)}?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    startFrom = pendingPos
+                    pickedUri = uri
+                    pendingUri = null
+                }) { Text("Resume") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    startFrom = 0L
+                    pickedUri = uri
+                    pendingUri = null
+                }) { Text("Start Over") }
             }
         )
     }
@@ -167,6 +222,14 @@ private fun skbAmoled() = darkColorScheme(
     onSurface = Color(0xFFEAEAEA),
     onSurfaceVariant = Color(0xFFAAAAAA)
 )
+
+internal fun fmtTime(ms: Long): String {
+    val s = ms / 1000
+    val h = s / 3600
+    val m = (s % 3600) / 60
+    val sec = s % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
+}
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
