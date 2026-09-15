@@ -185,6 +185,7 @@ private fun MainContent(
     var tab by remember { mutableIntStateOf(0) }
     var showHistory by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
+    var selectedFolderId by remember { mutableStateOf<String?>(null) }
     var lastBackAt by remember { mutableLongStateOf(0L) }
 
     val notifPerm = rememberLauncherForActivityResult(
@@ -208,7 +209,8 @@ private fun MainContent(
             }
             showSearch -> showSearch = false
             showHistory -> showHistory = false
-            tab != 0 -> tab = 0
+            tab == 2 && selectedFolderId != null -> selectedFolderId = null
+            tab != 0 -> { tab = 0; selectedFolderId = null }
             else -> {
                 val now = System.currentTimeMillis()
                 if (now - lastBackAt < 2000L) {
@@ -310,7 +312,10 @@ private fun MainContent(
             playlists = playlists,
             theme = theme,
             tab = tab,
-            onTabChange = { tab = it },
+            onTabChange = {
+                tab = it
+                if (it != 2) selectedFolderId = null
+            },
             onOpenVideo = { openSingleVideo(it) },
             onPickVideo = { picker.launch(arrayOf("video/*")) },
             onPlayAll = { playAll(it) },

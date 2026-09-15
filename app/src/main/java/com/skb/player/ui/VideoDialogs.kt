@@ -147,28 +147,36 @@ fun DeleteConfirmDialog(
 @Composable
 fun VideoActionMenu(
     video: VideoItem,
+    isFavorite: Boolean,
+    isWatchLater: Boolean,
     onDismiss: () -> Unit,
     onPlay: () -> Unit,
     onInfo: () -> Unit,
     onRename: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onToggleWatchLater: () -> Unit,
+    onSaveToPlaylist: () -> Unit,
+    onShare: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(video.name, fontWeight = FontWeight.SemiBold) },
         text = {
             Column {
-                TextButton(onClick = { onPlay(); onDismiss() }, modifier = Modifier.fillMaxWidth()) {
-                    Text("\u25B6  Play", modifier = Modifier.fillMaxWidth())
+                MenuRow("\u25B6  Play") { onPlay(); onDismiss() }
+                MenuRow(if (isFavorite) "\u2B50  Remove from Favorites" else "\u2606  Add to Favorites") {
+                    onToggleFavorite(); onDismiss()
                 }
-                TextButton(onClick = { onInfo(); onDismiss() }, modifier = Modifier.fillMaxWidth()) {
-                    Text("\u2139  Info", modifier = Modifier.fillMaxWidth())
+                MenuRow(if (isWatchLater) "\u23F0  Remove from Watch Later" else "\u23F1  Add to Watch Later") {
+                    onToggleWatchLater(); onDismiss()
                 }
-                TextButton(onClick = { onRename(); onDismiss() }, modifier = Modifier.fillMaxWidth()) {
-                    Text("\u270F  Rename", modifier = Modifier.fillMaxWidth())
-                }
-                TextButton(onClick = { onDelete(); onDismiss() }, modifier = Modifier.fillMaxWidth()) {
-                    Text("\uD83D\uDDD1  Delete", color = Color(0xFFFF6E6E), modifier = Modifier.fillMaxWidth())
+                MenuRow("\uD83D\uDCD1  Save to Playlist") { onSaveToPlaylist(); onDismiss() }
+                MenuRow("\u2139  Info") { onInfo(); onDismiss() }
+                MenuRow("\u270F  Rename") { onRename(); onDismiss() }
+                MenuRow("\uD83D\uDD17  Share") { onShare(); onDismiss() }
+                MenuRow("\uD83D\uDDD1  Delete", color = Color(0xFFFF6E6E)) {
+                    onDelete(); onDismiss()
                 }
             }
         },
@@ -176,6 +184,24 @@ fun VideoActionMenu(
             TextButton(onClick = onDismiss) { Text("Close") }
         }
     )
+}
+
+@Composable
+private fun MenuRow(
+    label: String,
+    color: Color = Color.Unspecified,
+    onClick: () -> Unit
+) {
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(
+            label,
+            color = if (color == Color.Unspecified) Color.Unspecified else color,
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
 }
 
 private fun fmtInfo(ms: Long): String {

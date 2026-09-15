@@ -1,6 +1,11 @@
 package com.skb.player.ui
 
 import android.Manifest
+import android.app.Activity
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import android.provider.MediaStore
+import android.widget.Toast
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
@@ -54,6 +59,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.skb.player.library.FavoritesManager
+import com.skb.player.library.FileOps
 import com.skb.player.library.HistoryManager
 import com.skb.player.library.MediaScanner
 import com.skb.player.library.PlaylistManager
@@ -94,13 +100,22 @@ fun HomeScaffold(
     onPlayUris: (List<Uri>) -> Unit,
     onOpenHistory: () -> Unit,
     onOpenSearch: () -> Unit,
-    onThemeChange: (Int) -> Unit
+    onThemeChange: (Int) -> Unit,
+    selectedFolderId: String?,
+    onSelectFolder: (String?) -> Unit
 ) {
     val context = LocalContext.current
     var hasPermission by remember { mutableStateOf(false) }
     var libraryVideos by remember { mutableStateOf<List<VideoItem>>(emptyList()) }
     var sortMode by remember { mutableIntStateOf(0) }
     var refreshKey by remember { mutableIntStateOf(0) }
+    var actionVideo by remember { mutableStateOf<VideoItem?>(null) }
+    var infoVideo by remember { mutableStateOf<VideoItem?>(null) }
+    var renameVideo by remember { mutableStateOf<VideoItem?>(null) }
+    var deleteVideo by remember { mutableStateOf<VideoItem?>(null) }
+    var saveToPlaylistVideo by remember { mutableStateOf<VideoItem?>(null) }
+    var favTick by remember { mutableIntStateOf(0) }
+    var pendingDeleteVideo by remember { mutableStateOf<VideoItem?>(null) }
 
     val permLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -158,10 +173,17 @@ fun HomeScaffold(
                 1 -> VideosTab(
                     sortedVideos, hasPermission, SortMode.entries[sortMode], theme,
                     onOpenVideo, onPickVideo, onPlayAll, onOpenSearch,
+                    onMore = { actionVideo = it },
                     onCycleSort = { sortMode = (sortMode + 1) % SortMode.entries.size }
                 ) { permLauncher.launch(requiredPerms()) }
                 2 -> if (hasPermission) {
-                    FolderScreen(allVideos = libraryVideos, onOpenVideo = onOpenVideo)
+                    FolderScreen(
+                        allVideos = libraryVideos,
+                        selectedFolderId = selectedFolderId,
+                        onSelectFolder = onSelectFolder,
+                        onOpenVideo = onOpenVideo,
+                        onMore = { actionVideo = it }
+                    )
                 } else {
                     PermissionPrompt { permLauncher.launch(requiredPerms()) }
                 }
@@ -182,6 +204,114 @@ fun HomeScaffold(
                 )
             }
         }
+    }
+
+    val deleteLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        val v = pendingDeleteVideo
+        pendingDeleteVideo = null
+        if (v != null && result.resultCode == Activity.RESULT_OK) {
+            Toast.makeText(context, "Deleted: ${v.name}", Toast.LENGTH_SHORT).show()
+            refreshKey++
+        }
+    }
+
+    actionVideo?.let { v ->
+        VideoActionMenu(
+            video = v,
+            isFavorite = favorites.isFavorite(v.uri),
+            isWatchLater = favorites.isWatchLater(v.uri),
+            onDismiss = { actionVideo = null },
+            onPlay = { onOpenVideo(v.uri) },
+            onInfo = { infoVideo = v },
+            onRename = { renameVideo = v },
+            onDelete = { deleteVideo = v },
+            onToggleFavorite = { favorites.toggleFavorite(v.uri); favTick++ },
+            onToggleWatchLater = { favorites.toggleWatchLater(v.uri); favTick++ },
+            onSaveToPlaylist = { saveToPlaylistVideo = v },
+            onShare = {
+                val ctx = context
+                try {
+                    val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                        type = "video/*"
+                        putExtra(android.content.Intent.EXTRA_STREAM, v.uri)
+                        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    ctx.startActivity(
+                        android.content.Intent.createChooser(send, "Share video")
+                    )
+                } catch (_: Exception) {}
+            }
+        )
+    }
+
+    infoVideo?.let { v -> VideoInfoDialog(video = v, onDismiss = { infoVideo = null }) }
+
+    renameVideo?.let { v ->
+        RenameDialog(
+            video = v,
+            onDismiss = { renameVideo = null },
+            onRename = { newName ->
+                val r = FileOps.rename(context, v.uri, newName)
+                if (r.isSuccess) {
+                    Toast.makeText(context, "Renamed", Toast.LENGTH_SHORT).show()
+                    refreshKey++
+                } else {
+                    Toast.makeText(
+                        context,
+                        "Rename failed: ${r.exceptionOrNull()?.message ?: "unknown"}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        )
+    }
+
+    deleteVideo?.let { v ->
+        DeleteConfirmDialog(
+            video = v,
+            onDismiss = { deleteVideo = null },
+            onConfirm = {
+                pendingDeleteVideo = v
+                try {
+                    val pi = MediaStore.createDeleteRequest(
+                        context.contentResolver, listOf(v.uri)
+                    )
+                    deleteLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+                } catch (e: Exception) {
+                    val r = FileOps.delete(context, v.uri)
+                    if (r.isSuccess) {
+                        Toast.makeText(context, "Deleted", Toast.LENGTH_SHORT).show()
+                        refreshKey++
+                    } else {
+                        Toast.makeText(
+                            context,
+                            "Delete failed: ${e.message}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+        )
+    }
+
+    saveToPlaylistVideo?.let { v ->
+        SaveToPlaylistDialog(
+            playlists = playlists.listAll(),
+            onDismiss = { saveToPlaylistVideo = null },
+            onCreateNew = { name ->
+                if (name.isNotBlank()) {
+                    val pl = playlists.create(name)
+                    playlists.addVideo(pl.id, v.uri)
+                    Toast.makeText(context, "Added to ${pl.name}", Toast.LENGTH_SHORT).show()
+                }
+            },
+            onAddTo = { pl ->
+                playlists.addVideo(pl.id, v.uri)
+                Toast.makeText(context, "Added to ${pl.name}", Toast.LENGTH_SHORT).show()
+            }
+        )
     }
 }
 
@@ -265,6 +395,7 @@ private fun VideosTab(
     onPickVideo: () -> Unit,
     onPlayAll: (List<VideoItem>) -> Unit,
     onOpenSearch: () -> Unit,
+    onMore: (VideoItem) -> Unit,
     onCycleSort: () -> Unit,
     onRequestPermission: () -> Unit
 ) {
@@ -316,7 +447,7 @@ private fun VideosTab(
                 }
             }
             items(libraryVideos, key = { "v_${it.uri}" }) { v ->
-                LibraryCard(v, theme) { onOpenVideo(v.uri) }
+                LibraryCard(v, theme, { onOpenVideo(v.uri) }, { onMore(v) })
             }
         }
     }
@@ -515,7 +646,12 @@ private fun RecentCard(entry: RecentEntry, theme: SKBTheme, onClick: () -> Unit)
 }
 
 @Composable
-private fun LibraryCard(v: VideoItem, theme: SKBTheme, onClick: () -> Unit) {
+private fun LibraryCard(
+    v: VideoItem,
+    theme: SKBTheme,
+    onClick: () -> Unit,
+    onMore: () -> Unit = {}
+) {
     Card(
         colors = CardDefaults.cardColors(containerColor = surfaceColor(theme)),
         shape = RoundedCornerShape(14.dp),
@@ -533,6 +669,10 @@ private fun LibraryCard(v: VideoItem, theme: SKBTheme, onClick: () -> Unit) {
                 Spacer(Modifier.height(4.dp))
                 Text("${fmt(v.durationMs)}  \u2022  ${humanSize(v.sizeBytes)}",
                     style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            TextButton(onClick = onMore) {
+                Text("\u22EE", style = MaterialTheme.typography.headlineSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }

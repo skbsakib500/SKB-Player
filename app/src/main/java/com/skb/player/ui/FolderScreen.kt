@@ -30,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -48,123 +49,41 @@ import com.skb.player.library.VideoItem
 @Composable
 fun FolderScreen(
     allVideos: List<VideoItem>,
-    onOpenVideo: (Uri) -> Unit
+    selectedFolderId: String?,
+    onSelectFolder: (String?) -> Unit,
+    onOpenVideo: (Uri) -> Unit,
+    onMore: (VideoItem) -> Unit
 ) {
     val context = LocalContext.current
-    var selectedFolder by remember { mutableStateOf<FolderItem?>(null) }
-    var actionVideo by remember { mutableStateOf<VideoItem?>(null) }
-    var infoVideo by remember { mutableStateOf<VideoItem?>(null) }
-    var renameVideo by remember { mutableStateOf<VideoItem?>(null) }
-    var deleteVideo by remember { mutableStateOf<VideoItem?>(null) }
-    var pendingDeleteAfterConsent by remember { mutableStateOf<VideoItem?>(null) }
-    var refreshKey by remember { mutableStateOf(0) }
+    var refreshKey by remember { mutableIntStateOf(0) }
 
     val deleteLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
-        val v = pendingDeleteAfterConsent
-        pendingDeleteAfterConsent = null
-        if (v != null) {
-            if (result.resultCode == Activity.RESULT_OK) {
-                Toast.makeText(context, "Deleted: ${v.name}", Toast.LENGTH_SHORT).show()
-                refreshKey++
-            } else {
-                Toast.makeText(context, "Delete cancelled", Toast.LENGTH_SHORT).show()
-            }
+        if (result.resultCode == Activity.RESULT_OK) {
+            Toast.makeText(context, "Deleted", Toast.LENGTH_SHORT).show()
+            refreshKey++
         }
     }
 
     val folders = remember(allVideos, refreshKey) { MediaScanner.foldersFrom(allVideos) }
 
-    if (selectedFolder == null) {
+    if (selectedFolderId == null) {
         FolderList(
             folders = folders,
-            onOpenFolder = { selectedFolder = it }
+            onOpenFolder = { onSelectFolder(it.bucketId) }
         )
     } else {
-        val folder = selectedFolder!!
-        val videos = remember(allVideos, refreshKey, folder.bucketId) {
-            MediaScanner.videosInFolder(allVideos, folder.bucketId)
+        val folder = folders.firstOrNull { it.bucketId == selectedFolderId }
+        val videos = remember(allVideos, refreshKey, selectedFolderId) {
+            MediaScanner.videosInFolder(allVideos, selectedFolderId)
         }
         FolderContents(
             folder = folder,
             videos = videos,
-            onBack = { selectedFolder = null },
+            onBack = { onSelectFolder(null) },
             onOpenVideo = { onOpenVideo(it.uri) },
-            onMore = { actionVideo = it }
-        )
-    }
-
-    actionVideo?.let { v ->
-        VideoActionMenu(
-            video = v,
-            onDismiss = { actionVideo = null },
-            onPlay = { onOpenVideo(v.uri) },
-            onInfo = { infoVideo = v },
-            onRename = { renameVideo = v },
-            onDelete = { deleteVideo = v }
-        )
-    }
-
-    infoVideo?.let { v ->
-        VideoInfoDialog(video = v, onDismiss = { infoVideo = null })
-    }
-
-    renameVideo?.let { v ->
-        RenameDialog(
-            video = v,
-            onDismiss = { renameVideo = null },
-            onRename = { newName ->
-                val r = FileOps.rename(context, v.uri, newName)
-                if (r.isSuccess) {
-                    Toast.makeText(context, "Renamed", Toast.LENGTH_SHORT).show()
-                    refreshKey++
-                } else {
-                    Toast.makeText(
-                        context,
-                        "Rename failed: ${r.exceptionOrNull()?.message ?: "unknown"}",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
-            }
-        )
-    }
-
-    deleteVideo?.let { v ->
-        DeleteConfirmDialog(
-            video = v,
-            onDismiss = { deleteVideo = null },
-            onConfirm = {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    try {
-                        pendingDeleteAfterConsent = v
-                        val pi = MediaStore.createDeleteRequest(
-                            context.contentResolver, listOf(v.uri)
-                        )
-                        deleteLauncher.launch(
-                            IntentSenderRequest.Builder(pi.intentSender).build()
-                        )
-                    } catch (e: Exception) {
-                        Toast.makeText(
-                            context,
-                            "Delete init failed: ${e.message}",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
-                } else {
-                    val r = FileOps.delete(context, v.uri)
-                    if (r.isSuccess) {
-                        Toast.makeText(context, "Deleted", Toast.LENGTH_SHORT).show()
-                        refreshKey++
-                    } else {
-                        Toast.makeText(
-                            context,
-                            "Delete failed: ${r.exceptionOrNull()?.message}",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
-                }
-            }
+            onMore = onMore
         )
     }
 }
@@ -229,7 +148,7 @@ private fun FolderList(
 
 @Composable
 private fun FolderContents(
-    folder: FolderItem,
+    folder: FolderItem?,
     videos: List<VideoItem>,
     onBack: () -> Unit,
     onOpenVideo: (VideoItem) -> Unit,
@@ -243,7 +162,7 @@ private fun FolderContents(
             TextButton(onClick = onBack) { Text("< Folders") }
             Column(Modifier.weight(1f).padding(start = 8.dp)) {
                 Text(
-                    folder.name,
+                    folder?.name ?: "Folder",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
@@ -287,7 +206,8 @@ private fun FolderContents(
                             )
                         }
                         TextButton(onClick = { onMore(v) }) {
-                            Text("\u22EE", style = MaterialTheme.typography.headlineSmall)
+                            Text("\u22EE", style = MaterialTheme.typography.headlineSmall,
+                                color = Color(0xFF9A9A9A))
                         }
                     }
                 }
