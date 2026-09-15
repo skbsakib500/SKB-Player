@@ -392,7 +392,12 @@ fun VideoPlayerScreen(
                     useController = false
                     setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
                     resizeMode = ASPECTS[aspectIndex]
-                    setUseTextureView(true)
+                    try {
+                        val m = PlayerView::class.java.getMethod(
+                            "setUseTextureView", java.lang.Boolean.TYPE
+                        )
+                        m.invoke(this, true)
+                    } catch (_: Exception) {}
                     playerViewRef = this
                 }
             },
