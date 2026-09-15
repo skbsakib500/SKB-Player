@@ -187,6 +187,12 @@ fun VideoPlayerScreen(
     var showBookmarkList by remember { mutableStateOf(false) }
     var bookmarkRefresh by remember { mutableIntStateOf(0) }
 
+    var abRepeatA by remember { mutableLongStateOf(-1L) }
+    var abRepeatB by remember { mutableLongStateOf(-1L) }
+    var showEqDialog by remember { mutableStateOf(false) }
+    var showSavePlaylist by remember { mutableStateOf(false) }
+    var currentAudioSessionId by remember { mutableIntStateOf(-1) }
+
     val pipAvailable = remember {
         Build.VERSION.SDK_INT >= 26 &&
         context.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
