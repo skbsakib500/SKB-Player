@@ -8,19 +8,28 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -28,7 +37,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -41,9 +52,18 @@ import com.skb.player.library.VideoItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+enum class SKBTab(val emoji: String, val label: String) {
+    HOME("\uD83C\uDFE0", "Home"),
+    VIDEOS("\uD83C\uDFAC", "Videos"),
+    MUSIC("\uD83C\uDFB5", "Music"),
+    SETTINGS("\u2699", "Settings")
+}
+
 @Composable
-fun HomeScreen(
+fun HomeScaffold(
     history: HistoryManager,
+    tab: Int,
+    onTabChange: (Int) -> Unit,
     onOpenVideo: (Uri) -> Unit,
     onPickVideo: () -> Unit
 ) {
@@ -55,10 +75,12 @@ fun HomeScreen(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { res -> hasPermission = res.values.all { it } }
 
+    fun requiredPerms(): Array<String> = if (Build.VERSION.SDK_INT >= 33)
+        arrayOf(Manifest.permission.READ_MEDIA_VIDEO)
+    else arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+
     LaunchedEffect(Unit) {
-        val perms = if (Build.VERSION.SDK_INT >= 33)
-            arrayOf(Manifest.permission.READ_MEDIA_VIDEO)
-        else arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        val perms = requiredPerms()
         val granted = perms.all {
             ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
         }
@@ -72,52 +94,167 @@ fun HomeScreen(
         }
     }
 
-    val recentList = history.getRecent()
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        bottomBar = {
+            NavigationBar(containerColor = Color(0xFF0A0A0A)) {
+                SKBTab.entries.forEachIndexed { i, t ->
+                    NavigationBarItem(
+                        selected = tab == i,
+                        onClick = { onTabChange(i) },
+                        icon = { Text(t.emoji) },
+                        label = { Text(t.label) }
+                    )
+                }
+            }
+        }
+    ) { padding ->
+        Box(Modifier.fillMaxSize().padding(padding)) {
+            when (tab) {
+                0 -> HomeTab(history, libraryVideos, hasPermission, onOpenVideo, onPickVideo) {
+                    permLauncher.launch(requiredPerms())
+                }
+                1 -> VideosTab(libraryVideos, hasPermission, onOpenVideo, onPickVideo) {
+                    permLauncher.launch(requiredPerms())
+                }
+                2 -> PlaceholderTab(
+                    "\uD83C\uDFB5 Music",
+                    "Background playback, playlists, equalizer \u2014 coming soon"
+                )
+                else -> PlaceholderTab(
+                    "\u2699 Settings",
+                    "Theme, subtitle defaults, study mode \u2014 coming soon"
+                )
+            }
+        }
+    }
+}
 
+@Composable
+private fun HomeTab(
+    history: HistoryManager,
+    libraryVideos: List<VideoItem>,
+    hasPermission: Boolean,
+    onOpenVideo: (Uri) -> Unit,
+    onPickVideo: () -> Unit,
+    onRequestPermission: () -> Unit
+) {
+    val recent = history.getRecent()
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        item {
-            Text("SKB Player", style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold)
-            Text("Premium Offline Media OS",
-                style = MaterialTheme.typography.bodySmall)
-            Spacer(Modifier.height(8.dp))
-        }
+        item { Header() }
+        item { SearchBarPlaceholder() }
 
-        if (recentList.isNotEmpty()) {
+        if (recent.isNotEmpty()) {
             item { SectionHeader("Continue Watching") }
-            items(recentList, key = { it.uri.toString() }) { entry ->
-                RecentCard(entry) { onOpenVideo(entry.uri) }
+            items(recent, key = { "recent_${it.uri}" }) { e ->
+                RecentCard(e) { onOpenVideo(e.uri) }
             }
-            item { Spacer(Modifier.height(12.dp)) }
         }
 
-        if (hasPermission && libraryVideos.isNotEmpty()) {
-            item { SectionHeader("Library") }
-            items(libraryVideos.take(30), key = { it.uri.toString() }) { v ->
+        if (!hasPermission) {
+            item {
+                Spacer(Modifier.height(12.dp))
+                Button(onClick = onRequestPermission) { Text("Grant Library Access") }
+            }
+        } else if (libraryVideos.isNotEmpty()) {
+            item { SectionHeader("Recently Added") }
+            items(libraryVideos.take(10), key = { "lib_${it.uri}" }) { v ->
                 LibraryCard(v) { onOpenVideo(v.uri) }
             }
-            item { Spacer(Modifier.height(12.dp)) }
-        } else if (!hasPermission) {
-            item {
-                Button(onClick = {
-                    val perms = if (Build.VERSION.SDK_INT >= 33)
-                        arrayOf(Manifest.permission.READ_MEDIA_VIDEO)
-                    else arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
-                    permLauncher.launch(perms)
-                }) { Text("Grant Library Access") }
-            }
         }
 
         item {
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(20.dp))
             Button(
                 onClick = onPickVideo,
                 modifier = Modifier.fillMaxWidth()
-            ) { Text("Pick Video") }
+            ) { Text("Pick Video from Storage") }
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+@Composable
+private fun VideosTab(
+    libraryVideos: List<VideoItem>,
+    hasPermission: Boolean,
+    onOpenVideo: (Uri) -> Unit,
+    onPickVideo: () -> Unit,
+    onRequestPermission: () -> Unit
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item { Header() }
+        if (!hasPermission) {
+            item {
+                Column {
+                    Text("Library access required to show videos.")
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = onRequestPermission) { Text("Grant Access") }
+                }
+            }
+        } else if (libraryVideos.isEmpty()) {
+            item { Text("No videos found on device.") }
+        } else {
+            items(libraryVideos, key = { "vid_${it.uri}" }) { v ->
+                LibraryCard(v) { onOpenVideo(v.uri) }
+            }
+        }
+        item {
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = onPickVideo, modifier = Modifier.fillMaxWidth()) {
+                Text("Pick Video from Storage")
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlaceholderTab(title: String, message: String) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Text(message, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun Header() {
+    Column {
+        Text(
+            "SKB Player",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold
+        )
+        Text("Premium Offline Media OS", style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
+private fun SearchBarPlaceholder() {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = Color(0xFF141414),
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("\uD83D\uDD0D", style = MaterialTheme.typography.bodyLarge)
+            Spacer(Modifier.width(10.dp))
+            Text("Search videos, music\u2026", color = Color(0xFF888888))
         }
     }
 }
@@ -128,26 +265,38 @@ private fun SectionHeader(text: String) {
         text,
         style = MaterialTheme.typography.titleMedium,
         fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.padding(top = 8.dp)
+        modifier = Modifier.padding(top = 10.dp)
     )
 }
 
 @Composable
 private fun RecentCard(entry: RecentEntry, onClick: () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth().clickable { onClick() }) {
-        Column(Modifier.padding(12.dp)) {
-            Text(entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                fontWeight = FontWeight.Medium)
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF101010)),
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier.fillMaxWidth().clickable { onClick() }
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Text(
+                entry.name,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                fontWeight = FontWeight.Medium
+            )
             Spacer(Modifier.height(4.dp))
             val pct = if (entry.durationMs > 0)
-                (entry.positionMs * 100 / entry.durationMs).toInt().coerceIn(0, 100) else 0
-            Text("$pct%  •  ${fmt(entry.positionMs)} / ${fmt(entry.durationMs)}",
-                style = MaterialTheme.typography.bodySmall)
+                (entry.positionMs * 100 / entry.durationMs).toInt().coerceIn(0, 100)
+            else 0
+            Text(
+                "$pct%  \u2022  ${fmt(entry.positionMs)} / ${fmt(entry.durationMs)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF9A9A9A)
+            )
             val frac = if (entry.durationMs > 0)
                 entry.positionMs.toFloat() / entry.durationMs else 0f
             LinearProgressIndicator(
                 progress = { frac.coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
             )
         }
     }
@@ -155,13 +304,24 @@ private fun RecentCard(entry: RecentEntry, onClick: () -> Unit) {
 
 @Composable
 private fun LibraryCard(v: VideoItem, onClick: () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth().clickable { onClick() }) {
-        Column(Modifier.padding(12.dp)) {
-            Text(v.name, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                fontWeight = FontWeight.Medium)
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF101010)),
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier.fillMaxWidth().clickable { onClick() }
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Text(
+                v.name,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                fontWeight = FontWeight.Medium
+            )
             Spacer(Modifier.height(4.dp))
-            Text(fmt(v.durationMs) + "  •  " + humanSize(v.sizeBytes),
-                style = MaterialTheme.typography.bodySmall)
+            Text(
+                "${fmt(v.durationMs)}  \u2022  ${humanSize(v.sizeBytes)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF9A9A9A)
+            )
         }
     }
 }
