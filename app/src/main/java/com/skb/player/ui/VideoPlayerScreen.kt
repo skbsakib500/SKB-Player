@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -40,6 +41,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -920,20 +922,7 @@ private fun captureScreenshot(
             else onResult(ShotResult.Error("TextureView bitmap null"))
         }
         else -> {
-            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-            try {
-                PixelCopy.request(
-                    pv,
-                    bmp,
-                    { result ->
-                        if (result == PixelCopy.SUCCESS) saveBitmap(bmp)
-                        else onResult(ShotResult.Error("PixelCopy $result"))
-                    },
-                    Handler(Looper.getMainLooper())
-                )
-            } catch (e: Exception) {
-                onResult(ShotResult.Error(e.message ?: "PixelCopy fail"))
-            }
+            onResult(ShotResult.Error("Unsupported view type"))
         }
     }
 }
