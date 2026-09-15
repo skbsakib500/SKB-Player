@@ -42,6 +42,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
+import com.skb.player.library.BookmarkManager
 import com.skb.player.library.HistoryManager
 import com.skb.player.ui.HomeScaffold
 import com.skb.player.ui.VideoPlayerScreen
@@ -49,10 +50,12 @@ import com.skb.player.ui.VideoPlayerScreen
 class MainActivity : ComponentActivity() {
 
     private lateinit var history: HistoryManager
+    private lateinit var bookmarks: BookmarkManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         history = HistoryManager(this)
+        bookmarks = BookmarkManager(this)
 
         setContent {
             MaterialTheme(colorScheme = skbAmoled()) {
@@ -85,7 +88,7 @@ class MainActivity : ComponentActivity() {
                             contentAlignment = Alignment.Center
                         ) { CircularProgressIndicator() }
                     } else {
-                        MainContent(ctrl, history)
+                        MainContent(ctrl, history, bookmarks)
                     }
                 }
             }
@@ -94,7 +97,11 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun MainContent(controller: MediaController, history: HistoryManager) {
+private fun MainContent(
+    controller: MediaController,
+    history: HistoryManager,
+    bookmarks: BookmarkManager
+) {
     val context = LocalContext.current
     var pickedUri by remember { mutableStateOf<Uri?>(null) }
     var startFrom by remember { mutableLongStateOf(0L) }
@@ -167,6 +174,7 @@ private fun MainContent(controller: MediaController, history: HistoryManager) {
             uri = current,
             startFrom = startFrom,
             history = history,
+            bookmarkManager = bookmarks,
             onBack = {
                 try { controller.pause() } catch (_: Exception) {}
                 pickedUri = null
@@ -193,7 +201,7 @@ private fun MainContent(controller: MediaController, history: HistoryManager) {
                 pendingUri = null
             },
             title = { Text("Resume Playback?") },
-            text = { Text("Continue from ${fmtTime(pendingPos)}?") },
+            text = { Text("Continue from ${fmtTime(uri)}?") },
             confirmButton = {
                 TextButton(onClick = {
                     startFrom = pendingPos
