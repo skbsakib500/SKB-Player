@@ -5,6 +5,9 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.media.AudioManager
 import android.net.Uri
+import android.view.View
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -24,6 +27,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -36,8 +40,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import kotlin.math.abs
@@ -79,11 +86,44 @@ fun VideoPlayerScreen(
     var sliderPos by remember { mutableFloatStateOf(0f) }
     var sliderDragging by remember { mutableStateOf(false) }
 
-    DisposableEffect(uri) {
-        player.setMediaItem(MediaItem.fromUri(uri))
+    // ---- Subtitle state ----
+    var subtitleUri by remember { mutableStateOf<Uri?>(null) }
+    var subtitleEnabled by remember { mutableStateOf(true) }
+    var subtitleSize by remember { mutableIntStateOf(1) } // 0=S, 1=M, 2=L
+
+    val subtitlePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { picked ->
+        if (picked != null) subtitleUri = picked
+    }
+
+    DisposableEffect(uri, subtitleUri) {
+        val savedPos = if (player.currentMediaItem != null) player.currentPosition else 0L
+        val wasPlaying = player.isPlaying
+        val builder = MediaItem.Builder().setUri(uri)
+        subtitleUri?.let { sub ->
+            val mime = detectSubtitleMime(sub)
+            builder.setSubtitleConfigurations(
+                listOf(
+                    MediaItem.SubtitleConfiguration.Builder(sub)
+                        .setMimeType(mime)
+                        .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                        .build()
+                )
+            )
+        }
+        player.setMediaItem(builder.build())
         player.prepare()
-        player.play()
+        if (savedPos > 0L) player.seekTo(savedPos)
+        if (wasPlaying || savedPos == 0L) player.play()
         onDispose { player.pause() }
+    }
+
+    LaunchedEffect(subtitleEnabled) {
+        player.trackSelectionParameters = player.trackSelectionParameters
+            .buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !subtitleEnabled)
+            .build()
     }
 
     LaunchedEffect(brightness) {
@@ -127,7 +167,7 @@ fun VideoPlayerScreen(
 
     LaunchedEffect(overlayVisible) {
         if (overlayVisible) {
-            delay(3000)
+            delay(3500)
             overlayVisible = false
         }
     }
@@ -143,6 +183,18 @@ fun VideoPlayerScreen(
                     this.player = player
                     useController = false
                     setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
+                }
+            },
+            update = { view ->
+                view.subtitleView?.apply {
+                    setStyle(CaptionStyleCompat.DEFAULT)
+                    val sz = when (subtitleSize) {
+                        0 -> 0.04f
+                        1 -> 0.06f
+                        else -> 0.08f
+                    }
+                    setFractionalTextSize(sz)
+                    visibility = if (subtitleEnabled) View.VISIBLE else View.GONE
                 }
             },
             modifier = Modifier.fillMaxSize()
@@ -211,7 +263,8 @@ fun VideoPlayerScreen(
                                     hudText = "Volume ${(volumeFrac * 100).toInt()}%"
                                 }
                                 DragMode.SEEK -> {
-                                    val deltaMs = ((change.position.x - startX) / size.width * 60_000).toLong()
+                                    val deltaMs =
+                                        ((change.position.x - startX) / size.width * 60_000).toLong()
                                     val target = (startPos + deltaMs)
                                         .coerceIn(0L, player.duration.coerceAtLeast(0L))
                                     player.seekTo(target)
@@ -230,11 +283,34 @@ fun VideoPlayerScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp),
+                    .padding(4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 TextButton(onClick = onBack) {
                     Text("Back", color = Color.White)
+                }
+                TextButton(onClick = {
+                    subtitlePicker.launch(
+                        arrayOf(
+                            "application/x-subrip",
+                            "text/vtt",
+                            "text/plain",
+                            "*/*"
+                        )
+                    )
+                }) {
+                    Text("SUB", color = Color.White)
+                }
+                TextButton(onClick = { subtitleSize = (subtitleSize + 1) % 3 }) {
+                    val label = when (subtitleSize) {
+                        0 -> "S"
+                        1 -> "M"
+                        else -> "L"
+                    }
+                    Text(label, color = Color.White)
+                }
+                TextButton(onClick = { subtitleEnabled = !subtitleEnabled }) {
+                    Text(if (subtitleEnabled) "ON" else "OFF", color = Color.White)
                 }
             }
 
@@ -302,6 +378,17 @@ fun VideoPlayerScreen(
                 )
             }
         }
+    }
+}
+
+private fun detectSubtitleMime(uri: Uri): String {
+    val name = uri.lastPathSegment?.lowercase() ?: return MimeTypes.APPLICATION_SUBRIP
+    return when {
+        name.endsWith(".srt") -> MimeTypes.APPLICATION_SUBRIP
+        name.endsWith(".vtt") -> MimeTypes.TEXT_VTT
+        name.endsWith(".ass") -> MimeTypes.TEXT_SSA
+        name.endsWith(".ssa") -> MimeTypes.TEXT_SSA
+        else -> MimeTypes.APPLICATION_SUBRIP
     }
 }
 
