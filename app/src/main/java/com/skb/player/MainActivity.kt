@@ -48,6 +48,7 @@ import com.skb.player.library.HistoryManager
 import com.skb.player.library.VideoItem
 import com.skb.player.ui.HistoryScreen
 import com.skb.player.ui.HomeScaffold
+import com.skb.player.ui.SearchScreen
 import com.skb.player.ui.VideoPlayerScreen
 
 class MainActivity : ComponentActivity() {
@@ -114,6 +115,7 @@ private fun MainContent(
     var pendingPos by remember { mutableLongStateOf(0L) }
     var tab by remember { mutableIntStateOf(0) }
     var showHistory by remember { mutableStateOf(false) }
+    var showSearch by remember { mutableStateOf(false) }
     var lastBackAt by remember { mutableLongStateOf(0L) }
 
     val notifPerm = rememberLauncherForActivityResult(
@@ -137,6 +139,7 @@ private fun MainContent(
                 queueMode = false
                 pickedUri = null
             }
+            showSearch -> showSearch = false
             showHistory -> showHistory = false
             tab != 0 -> tab = 0
             else -> {
@@ -214,6 +217,16 @@ private fun MainContent(
                 }
             )
         }
+        showSearch -> {
+            SearchScreen(
+                history = history,
+                onBack = { showSearch = false },
+                onOpenVideo = { uri ->
+                    showSearch = false
+                    openSingleVideo(uri)
+                }
+            )
+        }
         showHistory -> {
             HistoryScreen(
                 history = history,
@@ -232,7 +245,8 @@ private fun MainContent(
                 onOpenVideo = { openSingleVideo(it) },
                 onPickVideo = { picker.launch(arrayOf("video/*")) },
                 onPlayAll = { playAll(it) },
-                onOpenHistory = { showHistory = true }
+                onOpenHistory = { showHistory = true },
+                onOpenSearch = { showSearch = true }
             )
         }
     }

@@ -69,7 +69,8 @@ fun HomeScaffold(
     onOpenVideo: (Uri) -> Unit,
     onPickVideo: () -> Unit,
     onPlayAll: (List<VideoItem>) -> Unit,
-    onOpenHistory: () -> Unit
+    onOpenHistory: () -> Unit,
+    onOpenSearch: () -> Unit
 ) {
     val context = LocalContext.current
     var hasPermission by remember { mutableStateOf(false) }
@@ -117,11 +118,11 @@ fun HomeScaffold(
             when (tab) {
                 0 -> HomeTab(
                     history, libraryVideos, hasPermission,
-                    onOpenVideo, onPickVideo, onOpenHistory
+                    onOpenVideo, onPickVideo, onOpenHistory, onOpenSearch
                 ) { permLauncher.launch(requiredPerms()) }
                 1 -> VideosTab(
                     libraryVideos, hasPermission,
-                    onOpenVideo, onPickVideo, onPlayAll
+                    onOpenVideo, onPickVideo, onPlayAll, onOpenSearch
                 ) { permLauncher.launch(requiredPerms()) }
                 2 -> PlaceholderTab(
                     "\uD83C\uDFB5 Music",
@@ -144,6 +145,7 @@ private fun HomeTab(
     onOpenVideo: (Uri) -> Unit,
     onPickVideo: () -> Unit,
     onOpenHistory: () -> Unit,
+    onOpenSearch: () -> Unit,
     onRequestPermission: () -> Unit
 ) {
     val recent = history.getRecent(10)
@@ -153,7 +155,7 @@ private fun HomeTab(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         item { Header() }
-        item { SearchBarPlaceholder() }
+        item { SearchBarPlaceholder(onClick = onOpenSearch) }
 
         if (recent.isNotEmpty()) {
             item {
@@ -202,6 +204,7 @@ private fun VideosTab(
     onOpenVideo: (Uri) -> Unit,
     onPickVideo: () -> Unit,
     onPlayAll: (List<VideoItem>) -> Unit,
+    onOpenSearch: () -> Unit,
     onRequestPermission: () -> Unit
 ) {
     LazyColumn(
@@ -210,6 +213,7 @@ private fun VideosTab(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         item { Header() }
+        item { SearchBarPlaceholder(onClick = onOpenSearch) }
 
         if (!hasPermission) {
             item {
@@ -247,15 +251,6 @@ private fun VideosTab(
                 LibraryCard(v) { onOpenVideo(v.uri) }
             }
         }
-
-        if (!hasPermission) {
-            item {
-                Spacer(Modifier.height(12.dp))
-                Button(onClick = onPickVideo, modifier = Modifier.fillMaxWidth()) {
-                    Text("Pick Video from Storage")
-                }
-            }
-        }
     }
 }
 
@@ -285,11 +280,14 @@ private fun Header() {
 }
 
 @Composable
-private fun SearchBarPlaceholder() {
+private fun SearchBarPlaceholder(onClick: () -> Unit) {
     Surface(
         shape = RoundedCornerShape(14.dp),
         color = Color(0xFF141414),
-        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp)
+            .clickable { onClick() }
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
