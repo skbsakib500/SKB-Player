@@ -45,6 +45,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.skb.player.library.BookmarkManager
 import com.skb.player.library.HistoryManager
+import com.skb.player.library.SettingsManager
 import com.skb.player.library.VideoItem
 import com.skb.player.ui.HistoryScreen
 import com.skb.player.ui.HomeScaffold
@@ -55,11 +56,13 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var history: HistoryManager
     private lateinit var bookmarks: BookmarkManager
+    private lateinit var settings: SettingsManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         history = HistoryManager(this)
         bookmarks = BookmarkManager(this)
+        settings = SettingsManager(this)
 
         setContent {
             MaterialTheme(colorScheme = skbAmoled()) {
@@ -92,7 +95,7 @@ class MainActivity : ComponentActivity() {
                             contentAlignment = Alignment.Center
                         ) { CircularProgressIndicator() }
                     } else {
-                        MainContent(ctrl, history, bookmarks)
+                        MainContent(ctrl, history, bookmarks, settings)
                     }
                 }
             }
@@ -104,7 +107,8 @@ class MainActivity : ComponentActivity() {
 private fun MainContent(
     controller: MediaController,
     history: HistoryManager,
-    bookmarks: BookmarkManager
+    bookmarks: BookmarkManager,
+    settings: SettingsManager
 ) {
     val context = LocalContext.current
     var pickedUri by remember { mutableStateOf<Uri?>(null) }
@@ -197,6 +201,7 @@ private fun MainContent(
                 startFrom = startFrom,
                 history = history,
                 bookmarkManager = bookmarks,
+                settings = settings,
                 isQueueMode = queueMode,
                 onBack = {
                     try { controller.pause() } catch (_: Exception) {}
@@ -240,6 +245,7 @@ private fun MainContent(
         else -> {
             HomeScaffold(
                 history = history,
+                settings = settings,
                 tab = tab,
                 onTabChange = { tab = it },
                 onOpenVideo = { openSingleVideo(it) },

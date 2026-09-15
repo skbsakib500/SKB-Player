@@ -36,6 +36,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -50,6 +51,7 @@ import androidx.core.content.ContextCompat
 import com.skb.player.library.HistoryManager
 import com.skb.player.library.MediaScanner
 import com.skb.player.library.RecentEntry
+import com.skb.player.library.SettingsManager
 import com.skb.player.library.VideoItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -61,9 +63,17 @@ enum class SKBTab(val emoji: String, val label: String) {
     SETTINGS("\u2699", "Settings")
 }
 
+enum class SortMode(val label: String) {
+    DATE("Newest"),
+    NAME("Name"),
+    DURATION("Longest"),
+    SIZE("Largest")
+}
+
 @Composable
 fun HomeScaffold(
     history: HistoryManager,
+    settings: SettingsManager,
     tab: Int,
     onTabChange: (Int) -> Unit,
     onOpenVideo: (Uri) -> Unit,
@@ -75,6 +85,7 @@ fun HomeScaffold(
     val context = LocalContext.current
     var hasPermission by remember { mutableStateOf(false) }
     var libraryVideos by remember { mutableStateOf<List<VideoItem>>(emptyList()) }
+    var sortMode by remember { mutableIntStateOf(0) }
 
     val permLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -96,6 +107,15 @@ fun HomeScaffold(
     LaunchedEffect(hasPermission) {
         if (hasPermission) {
             libraryVideos = withContext(Dispatchers.IO) { MediaScanner.scanVideos(context) }
+        }
+    }
+
+    val sortedVideos = remember(libraryVideos, sortMode) {
+        when (SortMode.entries[sortMode]) {
+            SortMode.DATE -> libraryVideos
+            SortMode.NAME -> libraryVideos.sortedBy { it.name.lowercase() }
+            SortMode.DURATION -> libraryVideos.sortedByDescending { it.durationMs }
+            SortMode.SIZE -> libraryVideos.sortedByDescending { it.sizeBytes }
         }
     }
 
@@ -121,17 +141,15 @@ fun HomeScaffold(
                     onOpenVideo, onPickVideo, onOpenHistory, onOpenSearch
                 ) { permLauncher.launch(requiredPerms()) }
                 1 -> VideosTab(
-                    libraryVideos, hasPermission,
-                    onOpenVideo, onPickVideo, onPlayAll, onOpenSearch
+                    sortedVideos, hasPermission, SortMode.entries[sortMode],
+                    onOpenVideo, onPickVideo, onPlayAll, onOpenSearch,
+                    onCycleSort = { sortMode = (sortMode + 1) % SortMode.entries.size }
                 ) { permLauncher.launch(requiredPerms()) }
                 2 -> PlaceholderTab(
                     "\uD83C\uDFB5 Music",
                     "Background playback, playlists, equalizer \u2014 coming soon"
                 )
-                else -> PlaceholderTab(
-                    "\u2699 Settings",
-                    "Theme, subtitle defaults, study mode \u2014 coming soon"
-                )
+                else -> SettingsTabContent(settings)
             }
         }
     }
@@ -201,10 +219,12 @@ private fun HomeTab(
 private fun VideosTab(
     libraryVideos: List<VideoItem>,
     hasPermission: Boolean,
+    sortMode: SortMode,
     onOpenVideo: (Uri) -> Unit,
     onPickVideo: () -> Unit,
     onPlayAll: (List<VideoItem>) -> Unit,
     onOpenSearch: () -> Unit,
+    onCycleSort: () -> Unit,
     onRequestPermission: () -> Unit
 ) {
     LazyColumn(
@@ -241,11 +261,20 @@ private fun VideosTab(
                     ) { Text("Pick") }
                 }
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    "${libraryVideos.size} videos in library",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF888888)
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "${libraryVideos.size} videos  \u2022  Sorted: ${sortMode.label}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFF888888),
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = onCycleSort) {
+                        Text("Sort \u21BB", color = Color(0xFF00E5FF))
+                    }
+                }
             }
             items(libraryVideos, key = { "vid_${it.uri}" }) { v ->
                 LibraryCard(v) { onOpenVideo(v.uri) }

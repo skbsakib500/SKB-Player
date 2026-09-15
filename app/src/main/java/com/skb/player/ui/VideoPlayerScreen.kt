@@ -11,11 +11,13 @@ import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.view.Gravity
 import android.view.PixelCopy
 import android.view.SurfaceView
 import android.view.TextureView
 import android.view.View
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -65,6 +67,7 @@ import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import com.skb.player.library.BookmarkManager
 import com.skb.player.library.HistoryManager
+import com.skb.player.library.SettingsManager
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -82,10 +85,26 @@ private val ASPECTS = listOf(
 )
 private val ASPECT_LABELS = listOf("Fit", "Fill", "Zoom")
 private val SLEEP_OPTIONS = listOf(0, 15, 30, 45, 60)
+private val PROFILE_NAMES = listOf("Cinema", "Anime", "Study", "Minimal")
+private val POSITION_NAMES = listOf("Bottom", "Center", "Top")
 
 private const val DOUBLE_TAP_MS = 320L
 private const val DOUBLE_TAP_SLOP = 140f
 private const val CENTER_ZONE = 130f
+
+private data class SubtitleProfile(
+    val size: Int,
+    val position: Int,
+    val bgColor: Int,
+    val textColor: Int
+)
+
+private fun profileFor(index: Int) = when (index) {
+    1 -> SubtitleProfile(1, 0, 0xCCFFFFFF.toInt(), 0xFF000000.toInt())  // Anime
+    2 -> SubtitleProfile(1, 0, 0xB3000000.toInt(), 0xFF00E5FF.toInt())  // Study
+    3 -> SubtitleProfile(0, 0, 0x00000000, 0xFFFFFFFF.toInt())          // Minimal
+    else -> SubtitleProfile(2, 0, 0xB3000000.toInt(), 0xFFFFFFFF.toInt()) // Cinema
+}
 
 @Composable
 fun VideoPlayerScreen(
@@ -94,6 +113,7 @@ fun VideoPlayerScreen(
     startFrom: Long,
     history: HistoryManager,
     bookmarkManager: BookmarkManager,
+    settings: SettingsManager,
     isQueueMode: Boolean,
     onBack: () -> Unit,
     onEnterPip: () -> Unit
@@ -133,14 +153,18 @@ fun VideoPlayerScreen(
 
     var subtitleUri by remember { mutableStateOf<Uri?>(null) }
     var subtitleEnabled by remember { mutableStateOf(true) }
-    var subtitleSize by remember { mutableIntStateOf(1) }
+    var subtitleSize by remember { mutableIntStateOf(settings.defaultSubtitleSize) }
+    var subtitleDelay by remember { mutableFloatStateOf(0f) }
+    var subtitlePosition by remember { mutableIntStateOf(0) }
+    var subtitleProfile by remember { mutableIntStateOf(settings.defaultSubtitleProfile) }
 
     var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
-    var speedIndex by remember { mutableIntStateOf(1) }
+    var speedIndex by remember { mutableIntStateOf(settings.defaultSpeedIndex) }
     var aspectIndex by remember { mutableIntStateOf(0) }
     var rotationLocked by remember { mutableStateOf(false) }
 
     var showAudioDialog by remember { mutableStateOf(false) }
+    var showSubDialog by remember { mutableStateOf(false) }
     var sleepMenuOpen by remember { mutableStateOf(false) }
     var sleepEndAt by remember { mutableLongStateOf(0L) }
     var sleepJob by remember { mutableStateOf<Job?>(null) }
@@ -158,7 +182,6 @@ fun VideoPlayerScreen(
         ActivityResultContracts.OpenDocument()
     ) { picked -> if (picked != null) subtitleUri = picked }
 
-    // Media setup — only in single-video mode. Queue mode is set by caller.
     if (!isQueueMode && uri != null) {
         DisposableEffect(uri, subtitleUri) {
             try {
@@ -199,7 +222,9 @@ fun VideoPlayerScreen(
     }
 
     DisposableEffect(Unit) {
-        activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (settings.keepScreenOn) {
+            activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
         val originalOrient = activity?.requestedOrientation
             ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         onDispose {
@@ -219,6 +244,15 @@ fun VideoPlayerScreen(
                 .buildUpon()
                 .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !subtitleEnabled)
                 .build()
+        } catch (_: Exception) {}
+    }
+
+    LaunchedEffect(subtitleDelay) {
+        try {
+            val m = player.javaClass.getMethod(
+                "setSubtitleOffset", Float::class.javaPrimitiveType
+            )
+            m.invoke(player, subtitleDelay)
         } catch (_: Exception) {}
     }
 
@@ -313,10 +347,31 @@ fun VideoPlayerScreen(
             },
             update = { view ->
                 view.subtitleView?.apply {
-                    setStyle(CaptionStyleCompat.DEFAULT)
-                    val sz = when (subtitleSize) { 0 -> 0.04f; 1 -> 0.06f; else -> 0.08f }
+                    val prof = profileFor(subtitleProfile)
+                    val effectiveSize = if (prof.size == subtitleSize) subtitleSize else subtitleSize
+                    val sz = when (effectiveSize) { 0 -> 0.04f; 1 -> 0.06f; else -> 0.08f }
                     setFractionalTextSize(sz)
+                    setStyle(
+                        CaptionStyleCompat(
+                            prof.textColor,
+                            prof.bgColor,
+                            0x00000000,
+                            CaptionStyleCompat.EDGE_TYPE_NONE,
+                            0x00000000,
+                            null
+                        )
+                    )
                     visibility = if (subtitleEnabled) View.VISIBLE else View.GONE
+                    val lp = layoutParams
+                    if (lp is FrameLayout.LayoutParams) {
+                        lp.gravity = when (subtitlePosition) {
+                            1 -> Gravity.CENTER
+                            2 -> Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                            else -> Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                        }
+                        lp.bottomMargin = 40
+                        layoutParams = lp
+                    }
                 }
             },
             modifier = Modifier.fillMaxSize()
@@ -454,9 +509,8 @@ fun VideoPlayerScreen(
                             "application/x-subrip", "text/vtt", "text/plain", "*/*"
                         ))
                     }) { Text("SUB", color = Color.White) }
-                    TextButton(onClick = { subtitleSize = (subtitleSize + 1) % 3 }) {
-                        val l = when (subtitleSize) { 0 -> "S"; 1 -> "M"; else -> "L" }
-                        Text(l, color = Color.White)
+                    TextButton(onClick = { showSubDialog = true }) {
+                        Text("Sub \u2699", color = Color.White)
                     }
                     TextButton(onClick = { subtitleEnabled = !subtitleEnabled }) {
                         Text(if (subtitleEnabled) "ON" else "OFF", color = Color.White)
@@ -625,6 +679,69 @@ fun VideoPlayerScreen(
 
     if (showAudioDialog) {
         AudioTrackDialog(player = player, onDismiss = { showAudioDialog = false })
+    }
+
+    if (showSubDialog) {
+        AlertDialog(
+            onDismissRequest = { showSubDialog = false },
+            title = { Text("Subtitle Settings") },
+            text = {
+                Column {
+                    Text(
+                        "Delay: ${"%.1f".format(subtitleDelay)}s",
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        TextButton(onClick = {
+                            subtitleDelay = (subtitleDelay - 0.5f).coerceIn(-5f, 5f)
+                        }) { Text("\u2212 0.5s") }
+                        TextButton(onClick = { subtitleDelay = 0f }) { Text("Reset") }
+                        TextButton(onClick = {
+                            subtitleDelay = (subtitleDelay + 0.5f).coerceIn(-5f, 5f)
+                        }) { Text("+ 0.5s") }
+                    }
+
+                    Spacer(Modifier.padding(4.dp))
+                    Text("Position: ${POSITION_NAMES[subtitlePosition]}")
+                    TextButton(onClick = {
+                        subtitlePosition = (subtitlePosition + 1) % POSITION_NAMES.size
+                    }) { Text("Cycle Position") }
+
+                    Spacer(Modifier.padding(4.dp))
+                    Text("Size: ${listOf("S", "M", "L")[subtitleSize]}")
+                    TextButton(onClick = {
+                        subtitleSize = (subtitleSize + 1) % 3
+                    }) { Text("Cycle Size") }
+
+                    Spacer(Modifier.padding(4.dp))
+                    Text("Profile: ${PROFILE_NAMES[subtitleProfile]}")
+                    Row(Modifier.fillMaxWidth()) {
+                        PROFILE_NAMES.forEachIndexed { i, name ->
+                            TextButton(onClick = {
+                                subtitleProfile = i
+                                val p = profileFor(i)
+                                subtitleSize = p.size
+                                subtitlePosition = p.position
+                                settings.defaultSubtitleProfile = i
+                                hudText = "Profile: $name"
+                            }) {
+                                Text(
+                                    name,
+                                    color = if (subtitleProfile == i) Color(0xFF00E5FF)
+                                    else Color.White
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showSubDialog = false }) { Text("Done") }
+            }
+        )
     }
 
     if (sleepMenuOpen) {
