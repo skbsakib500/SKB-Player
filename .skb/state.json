@@ -1,0 +1,27 @@
+{
+  "as_of": "2026-09-16",
+  "git": {
+    "branch": "main",
+    "head": "e9d1519",
+    "head_subject": "fix: setUseTextureView via reflection for Media3 compatibility",
+    "clean": true,
+    "last_tag": null
+  },
+  "code": {
+    "kotlin_files": 22,
+    "ui_screens": 12,
+    "managers": 9,
+    "version_in_gradle": "0.1.0",
+    "version_effective": "2.4.0"
+  },
+  "features": {
+    "v0_7_foundation": "released",
+    "v1_0_study_mode": "released",
+    "v1_4_folders": "released",
+    "v2_0_pro": "released",
+    "v2_4_current": "released"
+  },
+  "current_focus": "v2.5 stabilization — version sync, .gitignore fix, docs",
+  "next_focus": "v3.0 — Music Mode (audio-only)",
+  "known_issues_open": ["KI-P01","KI-P02","KI-P03","KI-P04","KI-P05","KI-P06","KI-P07","KI-P08"]
+}
