@@ -610,10 +610,9 @@ fun VideoPlayerScreen(
                         hudText = if (isFav) "Removed from favorites" else "Added to favorites"
                     }) { Text(if (isFav) "\u2B50" else "\u2606", color = Color(0xFFFFD54F)) }
 
-                    TextButton(onClick = {
-                        playlists.let { _ -> }
-                        showSavePlaylist = true
-                    }) { Text("\uD83D\uDCD1", color = Color.White) }
+                    TextButton(onClick = { showSavePlaylist = true }) {
+                        Text("\uD83D\uDCD1", color = Color.White)
+                    }
 
                     val isLater = favorites.isWatchLater(curUri)
                     TextButton(onClick = {
