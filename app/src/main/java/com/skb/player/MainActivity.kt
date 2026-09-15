@@ -29,6 +29,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -37,7 +38,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaItem
@@ -57,11 +57,10 @@ import com.skb.player.ui.SearchScreen
 import com.skb.player.ui.VideoPlayerScreen
 import com.skb.player.ui.themeColors
 import kotlinx.coroutines.flow.MutableStateFlow
-import androidx.compose.runtime.collectAsState
 
 class MainActivity : ComponentActivity() {
 
-    private val incomingUri = MutableStateFlow<android.net.Uri?>(null)
+    private val incomingUri = MutableStateFlow<Uri?>(null)
 
     private lateinit var history: HistoryManager
     private lateinit var bookmarks: BookmarkManager
@@ -149,7 +148,7 @@ class MainActivity : ComponentActivity() {
             }
             Intent.ACTION_SEND -> {
                 @Suppress("DEPRECATION")
-                val uri = intent.getParcelableExtra<android.net.Uri>(Intent.EXTRA_STREAM)
+                val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
                 if (uri != null) incomingUri.value = uri
             }
         }
@@ -171,7 +170,7 @@ private fun MainContent(
     playlists: PlaylistManager,
     equalizer: EqualizerManager,
     theme: SKBTheme,
-    externalUri: android.net.Uri?,
+    externalUri: Uri?,
     onExternalUriConsumed: () -> Unit,
     onThemeChange: (Int) -> Unit
 ) {
@@ -205,19 +204,26 @@ private fun MainContent(
         when {
             showPlayer -> {
                 try { controller.pause() } catch (_: Exception) {}
-                showPlayer = false; queueMode = false; pickedUri = null
+                showPlayer = false
+                queueMode = false
+                pickedUri = null
             }
             showSearch -> showSearch = false
             showHistory -> showHistory = false
             tab == 2 && selectedFolderId != null -> selectedFolderId = null
-            tab != 0 -> { tab = 0; selectedFolderId = null }
+            tab != 0 -> {
+                tab = 0
+                selectedFolderId = null
+            }
             else -> {
                 val now = System.currentTimeMillis()
                 if (now - lastBackAt < 2000L) {
                     context.findActivity()?.finish()
                 } else {
                     lastBackAt = now
-                    Toast.makeText(context, "Press back again to exit", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        context, "Press back again to exit", Toast.LENGTH_SHORT
+                    ).show()
                 }
             }
         }
@@ -226,9 +232,13 @@ private fun MainContent(
     fun openSingleVideo(uri: Uri) {
         val saved = try { history.getPosition(uri) } catch (_: Exception) { 0L }
         if (saved > 30_000L) {
-            pendingPos = saved; pendingUri = uri
+            pendingPos = saved
+            pendingUri = uri
         } else {
-            startFrom = 0L; pickedUri = uri; queueMode = false; showPlayer = true
+            startFrom = 0L
+            pickedUri = uri
+            queueMode = false
+            showPlayer = true
         }
     }
 
@@ -243,9 +253,12 @@ private fun MainContent(
         try {
             val items = videos.map { MediaItem.fromUri(it.uri) }
             controller.setMediaItems(items, 0, 0L)
-            controller.prepare(); controller.play()
-            pickedUri = videos.first().uri; startFrom = 0L
-            queueMode = true; showPlayer = true
+            controller.prepare()
+            controller.play()
+            pickedUri = videos.first().uri
+            startFrom = 0L
+            queueMode = true
+            showPlayer = true
         } catch (e: Exception) {
             Toast.makeText(context, "Queue failed: ${e.message}", Toast.LENGTH_SHORT).show()
         }
@@ -256,9 +269,12 @@ private fun MainContent(
         try {
             val items = uris.map { MediaItem.fromUri(it) }
             controller.setMediaItems(items, 0, 0L)
-            controller.prepare(); controller.play()
-            pickedUri = uris.first(); startFrom = 0L
-            queueMode = true; showPlayer = true
+            controller.prepare()
+            controller.play()
+            pickedUri = uris.first()
+            startFrom = 0L
+            queueMode = true
+            showPlayer = true
         } catch (e: Exception) {
             Toast.makeText(context, "Queue failed: ${e.message}", Toast.LENGTH_SHORT).show()
         }
@@ -269,81 +285,109 @@ private fun MainContent(
     ) { uri -> if (uri != null) openSingleVideo(uri) }
 
     when {
-        showPlayer -> VideoPlayerScreen(
-            player = controller,
-            uri = pickedUri,
-            startFrom = startFrom,
-            history = history,
-            bookmarkManager = bookmarks,
-            favorites = favorites,
-            playlists = playlists,
-            equalizer = equalizer,
-            settings = settings,
-            isQueueMode = queueMode,
-            onBack = {
-                try { controller.pause() } catch (_: Exception) {}
-                showPlayer = false; queueMode = false; pickedUri = null
-            },
-            onEnterPip = {
-                val act = context.findActivity() ?: return@VideoPlayerScreen
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    try {
-                        val params = PictureInPictureParams.Builder()
-                            .setAspectRatio(Rational(16, 9)).build()
-                        act.enterPictureInPictureMode(params)
-                    } catch (_: Exception) {}
+        showPlayer -> {
+            VideoPlayerScreen(
+                player = controller,
+                uri = pickedUri,
+                startFrom = startFrom,
+                history = history,
+                bookmarkManager = bookmarks,
+                favorites = favorites,
+                playlists = playlists,
+                equalizer = equalizer,
+                settings = settings,
+                isQueueMode = queueMode,
+                onBack = {
+                    try { controller.pause() } catch (_: Exception) {}
+                    showPlayer = false
+                    queueMode = false
+                    pickedUri = null
+                },
+                onEnterPip = {
+                    val act = context.findActivity() ?: return@VideoPlayerScreen
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        try {
+                            val params = PictureInPictureParams.Builder()
+                                .setAspectRatio(Rational(16, 9))
+                                .build()
+                            act.enterPictureInPictureMode(params)
+                        } catch (_: Exception) {}
+                    }
                 }
-            }
-        )
-        showSearch -> SearchScreen(
-            history = history,
-            onBack = { showSearch = false },
-            onOpenVideo = { showSearch = false; openSingleVideo(it) }
-        )
-        showHistory -> HistoryScreen(
-            history = history,
-            onBack = { showHistory = false },
-            onOpenVideo = { showHistory = false; openSingleVideo(it) }
-        )
-        else -> HomeScaffold(
-            history = history,
-            settings = settings,
-            favorites = favorites,
-            playlists = playlists,
-            theme = theme,
-            tab = tab,
-            onTabChange = {
-                tab = it
-                if (it != 2) selectedFolderId = null
-            },
-            onOpenVideo = { openSingleVideo(it) },
-            onPickVideo = { picker.launch(arrayOf("video/*")) },
-            onPlayAll = { playAll(it) },
-            onPlayUris = { playUris(it) },
-            onOpenHistory = { showHistory = true },
-            onOpenSearch = { showSearch = true },
-            onThemeChange = onThemeChange
-        )
+            )
+        }
+        showSearch -> {
+            SearchScreen(
+                history = history,
+                onBack = { showSearch = false },
+                onOpenVideo = { uri ->
+                    showSearch = false
+                    openSingleVideo(uri)
+                }
+            )
+        }
+        showHistory -> {
+            HistoryScreen(
+                history = history,
+                onBack = { showHistory = false },
+                onOpenVideo = { uri ->
+                    showHistory = false
+                    openSingleVideo(uri)
+                }
+            )
+        }
+        else -> {
+            HomeScaffold(
+                history = history,
+                settings = settings,
+                favorites = favorites,
+                playlists = playlists,
+                theme = theme,
+                tab = tab,
+                onTabChange = {
+                    tab = it
+                    if (it != 2) selectedFolderId = null
+                },
+                onOpenVideo = { openSingleVideo(it) },
+                onPickVideo = { picker.launch(arrayOf("video/*")) },
+                onPlayAll = { playAll(it) },
+                onPlayUris = { playUris(it) },
+                onOpenHistory = { showHistory = true },
+                onOpenSearch = { showSearch = true },
+                onThemeChange = onThemeChange,
+                selectedFolderId = selectedFolderId,
+                onSelectFolder = { selectedFolderId = it }
+            )
+        }
     }
 
     pendingUri?.let { uri ->
         AlertDialog(
             onDismissRequest = {
-                startFrom = 0L; pickedUri = uri; queueMode = false
-                showPlayer = true; pendingUri = null
+                startFrom = 0L
+                pickedUri = uri
+                queueMode = false
+                showPlayer = true
+                pendingUri = null
             },
             title = { Text("Resume Playback?") },
             text = { Text("Continue from ${fmtTime(pendingPos)}?") },
             confirmButton = {
                 TextButton(onClick = {
-                    startFrom = pendingPos; pickedUri = uri
-                    queueMode = false; showPlayer = true; pendingUri = null
+                    startFrom = pendingPos
+                    pickedUri = uri
+                    queueMode = false
+                    showPlayer = true
+                    pendingUri = null
                 }) { Text("Resume") }
             },
             dismissButton = {
                 TextButton(onClick = {
-                    startFrom = 0L; pickedUri = uri
-                    queueMode = false; showPlayer = true; pendingUri = null
+                    startFrom = 0L
+                    pickedUri = uri
+                    queueMode = false
+                    showPlayer = true
+                    pendingUri = null
                 }) { Text("Start Over") }
             }
         )
@@ -356,17 +400,6 @@ internal fun fmtTime(ms: Long): String {
     val m = (s % 3600) / 60
     val sec = s % 60
     return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
-}
-
-internal fun shareText(context: Context, text: String, subject: String) {
-    try {
-        val i = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, text)
-            putExtra(Intent.EXTRA_SUBJECT, subject)
-        }
-        context.startActivity(Intent.createChooser(i, "Share"))
-    } catch (_: Exception) {}
 }
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
