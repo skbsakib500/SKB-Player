@@ -772,25 +772,62 @@ private fun SectionHeader(text: String, modifier: Modifier = Modifier) {
 
 @Composable
 private fun RecentCard(entry: RecentEntry, theme: SKBTheme, onClick: () -> Unit) {
+    val pct = if (entry.durationMs > 0)
+        (entry.positionMs * 100 / entry.durationMs).toInt().coerceIn(0, 100) else 0
+    val frac = if (entry.durationMs > 0)
+        entry.positionMs.toFloat() / entry.durationMs else 0f
+    val remaining = (entry.durationMs - entry.positionMs).coerceAtLeast(0L)
+
     Card(
         colors = CardDefaults.cardColors(containerColor = surfaceColor(theme)),
         shape = RoundedCornerShape(14.dp),
         modifier = Modifier.fillMaxWidth().clickable { onClick() }
     ) {
-        Column(Modifier.padding(14.dp)) {
-            Text(entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                fontWeight = FontWeight.Medium)
-            Spacer(Modifier.height(4.dp))
-            val pct = if (entry.durationMs > 0)
-                (entry.positionMs * 100 / entry.durationMs).toInt().coerceIn(0, 100) else 0
-            Text("$pct%  \u2022  ${fmt(entry.positionMs)} / ${fmt(entry.durationMs)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            val frac = if (entry.durationMs > 0)
-                entry.positionMs.toFloat() / entry.durationMs else 0f
-            LinearProgressIndicator(
-                progress = { frac.coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
+        Row(
+            modifier = Modifier.padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box {
+                VideoThumb(entry.uri, theme)
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = Color(0xCC000000),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(4.dp)
+                ) {
+                    Text(
+                        fmt(entry.durationMs),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                    )
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    fontWeight = FontWeight.Medium,
+                    style = MaterialTheme.typography.bodyLarge)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "$pct%  \u2022  ${fmt(remaining)} left",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(Modifier.height(6.dp))
+                LinearProgressIndicator(
+                    progress = { frac.coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth().height(3.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "\u25B6",
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.primary
             )
         }
     }

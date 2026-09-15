@@ -392,6 +392,7 @@ fun VideoPlayerScreen(
                     useController = false
                     setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
                     resizeMode = ASPECTS[aspectIndex]
+                    setUseTextureView(true)
                     playerViewRef = this
                 }
             },
@@ -584,7 +585,7 @@ fun VideoPlayerScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 48.dp, start = 4.dp, end = 4.dp),
+                    .padding(top = 52.dp, start = 4.dp, end = 60.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 TextButton(onClick = { showAddBookmark = true }) {
@@ -610,6 +611,8 @@ fun VideoPlayerScreen(
                         }
                     }
                 }) { Text("\uD83D\uDCF8 Shot", color = Color.White) }
+
+                Spacer(Modifier.weight(1f))
 
                 val curUri = player.currentMediaItem?.localConfiguration?.uri
                 if (curUri != null) {

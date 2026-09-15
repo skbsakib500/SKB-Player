@@ -54,6 +54,7 @@ import com.skb.player.ui.HistoryScreen
 import com.skb.player.ui.HomeScaffold
 import com.skb.player.ui.SKBTheme
 import com.skb.player.ui.SearchScreen
+import com.skb.player.ui.SplashScreen
 import com.skb.player.ui.VideoPlayerScreen
 import com.skb.player.ui.themeColors
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -83,6 +84,11 @@ class MainActivity : ComponentActivity() {
             val theme = SKBTheme.entries.getOrElse(themeIdx) { SKBTheme.AMOLED }
 
             MaterialTheme(colorScheme = themeColors(theme)) {
+                var showSplash by remember { mutableStateOf(true) }
+
+                if (showSplash) {
+                    SplashScreen(onDone = { showSplash = false })
+                } else {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -129,6 +135,7 @@ class MainActivity : ComponentActivity() {
                             }
                         )
                     }
+                }
                 }
             }
         }
