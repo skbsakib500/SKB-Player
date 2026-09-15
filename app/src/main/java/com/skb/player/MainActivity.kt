@@ -200,14 +200,6 @@ private fun MainContent(
         }
     }
 
-    LaunchedEffect(externalUri) {
-        val u = externalUri ?: return@LaunchedEffect
-        try {
-            openSingleVideo(u)
-        } catch (_: Exception) {}
-        onExternalUriConsumed()
-    }
-
     BackHandler {
         when {
             showPlayer -> {
@@ -236,6 +228,12 @@ private fun MainContent(
         } else {
             startFrom = 0L; pickedUri = uri; queueMode = false; showPlayer = true
         }
+    }
+
+    LaunchedEffect(externalUri) {
+        val u = externalUri ?: return@LaunchedEffect
+        try { openSingleVideo(u) } catch (_: Exception) {}
+        onExternalUriConsumed()
     }
 
     fun playAll(videos: List<VideoItem>) {

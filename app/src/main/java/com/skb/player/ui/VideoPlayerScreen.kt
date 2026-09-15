@@ -338,7 +338,10 @@ fun VideoPlayerScreen(
     LaunchedEffect(player) {
         while (true) {
             try {
-                val sessionId = player.audioSessionId
+                val sessionId = try {
+                    val m = player.javaClass.getMethod("getAudioSessionId")
+                    (m.invoke(player) as? Int) ?: 0
+                } catch (_: Exception) { 0 }
                 if (sessionId != 0 && sessionId != currentAudioSessionId) {
                     currentAudioSessionId = sessionId
                     equalizer.attach(sessionId)
