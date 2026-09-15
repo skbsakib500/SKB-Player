@@ -399,13 +399,82 @@ private fun VideosTab(
     onCycleSort: () -> Unit,
     onRequestPermission: () -> Unit
 ) {
+    val context = LocalContext.current
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedUris by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var pendingDeleteUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    var refreshTick by remember { mutableIntStateOf(0) }
+
+    fun exitSelection() {
+        selectionMode = false
+        selectedUris = emptySet()
+    }
+
+    BackHandler(enabled = selectionMode) { exitSelection() }
+
+    val batchDeleteLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        val uris = pendingDeleteUris
+        pendingDeleteUris = emptyList()
+        if (result.resultCode == android.app.Activity.RESULT_OK && uris.isNotEmpty()) {
+            Toast.makeText(
+                context, "Deleted ${uris.size} item(s)", Toast.LENGTH_SHORT
+            ).show()
+            refreshTick++
+        }
+        exitSelection()
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        item { Header() }
-        item { SearchBarPlaceholder(theme) { onOpenSearch() } }
+        item {
+            if (selectionMode) {
+                SelectionBar(
+                    count = selectedUris.size,
+                    onCancel = { exitSelection() },
+                    onSelectAll = {
+                        selectedUris = libraryVideos.map { it.uri.toString() }.toSet()
+                    },
+                    onDelete = {
+                        val uris = libraryVideos
+                            .filter { selectedUris.contains(it.uri.toString()) }
+                            .map { it.uri }
+                        if (uris.isEmpty()) return@SelectionBar
+                        pendingDeleteUris = uris
+                        try {
+                            val pi = MediaStore.createDeleteRequest(
+                                context.contentResolver, uris
+                            )
+                            batchDeleteLauncher.launch(
+                                IntentSenderRequest.Builder(pi.intentSender).build()
+                            )
+                        } catch (e: Exception) {
+                            // Fallback: try direct delete
+                            var ok = 0
+                            uris.forEach { u ->
+                                val r = FileOps.delete(context, u)
+                                if (r.isSuccess) ok++
+                            }
+                            Toast.makeText(
+                                context, "Deleted $ok/${uris.size}", Toast.LENGTH_LONG
+                            ).show()
+                            refreshTick++
+                            exitSelection()
+                        }
+                    }
+                )
+            } else {
+                Header()
+            }
+        }
+
+        if (!selectionMode) {
+            item { SearchBarPlaceholder(theme) { onOpenSearch() } }
+        }
 
         if (!hasPermission) {
             item {
@@ -418,36 +487,109 @@ private fun VideosTab(
         } else if (libraryVideos.isEmpty()) {
             item { Text("No videos found on device.") }
         } else {
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(onClick = { onPlayAll(libraryVideos) }, modifier = Modifier.weight(1f)) {
-                        Text("\u25B6 Play All")
+            if (!selectionMode) {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = { onPlayAll(libraryVideos) },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("\u25B6 Play All") }
+                        OutlinedButton(
+                            onClick = onPickVideo,
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Pick") }
                     }
-                    OutlinedButton(onClick = onPickVideo, modifier = Modifier.weight(1f)) {
-                        Text("Pick")
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "${libraryVideos.size} videos  \u2022  ${sortMode.label}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = onCycleSort) {
+                            Text("Sort \u21BB", color = MaterialTheme.colorScheme.primary)
+                        }
                     }
-                }
-                Spacer(Modifier.height(4.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                    Spacer(Modifier.height(2.dp))
                     Text(
-                        "${libraryVideos.size} videos  \u2022  ${sortMode.label}",
+                        "Long-press any video to select multiple",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    TextButton(onClick = onCycleSort) {
-                        Text("Sort \u21BB", color = MaterialTheme.colorScheme.primary)
-                    }
                 }
             }
-            items(libraryVideos, key = { "v_${it.uri}" }) { v ->
-                LibraryCard(v, theme, { onOpenVideo(v.uri) }, { onMore(v) })
+
+            items(libraryVideos, key = { "v_${it.uri}_$refreshTick" }) { v ->
+                val key = v.uri.toString()
+                val selected = selectedUris.contains(key)
+                LibraryCard(
+                    v = v,
+                    theme = theme,
+                    onClick = {
+                        if (selectionMode) {
+                            selectedUris = if (selected)
+                                selectedUris - key else selectedUris + key
+                        } else {
+                            onOpenVideo(v.uri)
+                        }
+                    },
+                    onMore = { onMore(v) },
+                    onLongClick = {
+                        if (!selectionMode) {
+                            selectionMode = true
+                            selectedUris = setOf(key)
+                        }
+                    },
+                    isSelected = selected,
+                    inSelectionMode = selectionMode
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SelectionBar(
+    count: Int,
+    onCancel: () -> Unit,
+    onSelectAll: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextButton(onClick = onCancel) {
+                Text("\u2715", style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onBackground)
+            }
+            Text(
+                "$count selected",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f).padding(start = 8.dp)
+            )
+            TextButton(onClick = onSelectAll) {
+                Text("All", color = MaterialTheme.colorScheme.primary)
+            }
+            TextButton(onClick = onDelete, enabled = count > 0) {
+                Text(
+                    "Delete",
+                    color = if (count > 0) Color(0xFFFF6E6E)
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
@@ -645,22 +787,46 @@ private fun RecentCard(entry: RecentEntry, theme: SKBTheme, onClick: () -> Unit)
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LibraryCard(
     v: VideoItem,
     theme: SKBTheme,
     onClick: () -> Unit,
-    onMore: () -> Unit = {}
+    onMore: () -> Unit = {},
+    onLongClick: (() -> Unit)? = null,
+    isSelected: Boolean = false,
+    inSelectionMode: Boolean = false
 ) {
+    val baseColor = surfaceColor(theme)
+    val containerColor = if (isSelected)
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)
+    else baseColor
+
     Card(
-        colors = CardDefaults.cardColors(containerColor = surfaceColor(theme)),
+        colors = CardDefaults.cardColors(containerColor = containerColor),
         shape = RoundedCornerShape(14.dp),
-        modifier = Modifier.fillMaxWidth().clickable { onClick() }
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
     ) {
         Row(
             modifier = Modifier.padding(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (inSelectionMode) {
+                Text(
+                    if (isSelected) "\u2611" else "\u2610",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = if (isSelected)
+                        MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.width(10.dp))
+            }
             VideoThumb(v.uri, theme)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
@@ -671,9 +837,11 @@ private fun LibraryCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            TextButton(onClick = onMore) {
-                Text("\u22EE", style = MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (!inSelectionMode) {
+                TextButton(onClick = onMore) {
+                    Text("\u22EE", style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
     }
