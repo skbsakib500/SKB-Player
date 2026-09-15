@@ -1,0 +1,8 @@
+{
+  "schema": "skb/v1",
+  "default_branch": "main",
+  "release": {"enabled":true,"tag_prefix":"v","changelog_file":"CHANGELOG.md","gradle_task":":app:assembleDebug"},
+  "context": {"include_docs":true,"include_git":true,"include_modules":true,"include_assets":true,"include_history":true},
+  "security": {"forbid_secrets_in_remote":true,"forbid_env_commit":true,"scan_patterns":["ghp_","gho_","sk-","AIza","gsk_"]},
+  "notifications": {"on_release":true,"on_issue":false}
+}

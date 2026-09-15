@@ -1,0 +1,27 @@
+{
+  "schema": "skb/v1",
+  "modules": [
+    {"name":"main","path":"app/src/main/java/com/skb/player/MainActivity.kt","type":"core","role":"Root nav host","status":"active","dependencies":["playback-service"]},
+    {"name":"playback-service","path":"app/src/main/java/com/skb/player/PlaybackService.kt","type":"service","role":"Foreground service + MediaSession","status":"active","dependencies":["media3"]},
+    {"name":"splash","path":"app/src/main/java/com/skb/player/ui/SplashScreen.kt","type":"ui","role":"Launch animation","status":"active","dependencies":[]},
+    {"name":"home","path":"app/src/main/java/com/skb/player/ui/HomeScreen.kt","type":"ui","role":"Video grid home","status":"active","dependencies":["media-scanner"]},
+    {"name":"folder","path":"app/src/main/java/com/skb/player/ui/FolderScreen.kt","type":"ui","role":"Folder browser","status":"active","dependencies":["media-scanner"]},
+    {"name":"history","path":"app/src/main/java/com/skb/player/ui/HistoryScreen.kt","type":"ui","role":"Watch history","status":"active","dependencies":["history-manager"]},
+    {"name":"search","path":"app/src/main/java/com/skb/player/ui/SearchScreen.kt","type":"ui","role":"Search","status":"active","dependencies":["media-scanner"]},
+    {"name":"settings","path":"app/src/main/java/com/skb/player/ui/SettingsScreen.kt","type":"ui","role":"Preferences","status":"active","dependencies":["settings-manager"]},
+    {"name":"player","path":"app/src/main/java/com/skb/player/ui/VideoPlayerScreen.kt","type":"ui","role":"ExoPlayer host + controls","status":"active","dependencies":["playback-service","bookmark-manager"]},
+    {"name":"bookmark-dialogs","path":"app/src/main/java/com/skb/player/ui/BookmarkDialogs.kt","type":"ui","role":"Bookmark add/edit","status":"active","dependencies":["bookmark-manager"]},
+    {"name":"video-dialogs","path":"app/src/main/java/com/skb/player/ui/VideoDialogs.kt","type":"ui","role":"Rename/delete/info","status":"active","dependencies":["file-ops"]},
+    {"name":"new-dialogs","path":"app/src/main/java/com/skb/player/ui/NewDialogs.kt","type":"ui","role":"Playlists, EQ, etc.","status":"active","dependencies":["playlist-manager","equalizer-manager"]},
+    {"name":"theme","path":"app/src/main/java/com/skb/player/ui/Theme.kt","type":"ui","role":"Material3 theme","status":"active","dependencies":[]},
+    {"name":"media-scanner","path":"app/src/main/java/com/skb/player/library/MediaScanner.kt","type":"service","role":"Local video scan","status":"active","dependencies":[]},
+    {"name":"history-manager","path":"app/src/main/java/com/skb/player/library/HistoryManager.kt","type":"data","role":"Watch history","status":"active","dependencies":[]},
+    {"name":"bookmark-manager","path":"app/src/main/java/com/skb/player/library/BookmarkManager.kt","type":"data","role":"Per-video bookmarks","status":"active","dependencies":[]},
+    {"name":"playlist-manager","path":"app/src/main/java/com/skb/player/library/PlaylistManager.kt","type":"data","role":"User playlists","status":"active","dependencies":[]},
+    {"name":"favorites-manager","path":"app/src/main/java/com/skb/player/library/FavoritesManager.kt","type":"data","role":"Favorites + watch later","status":"active","dependencies":[]},
+    {"name":"settings-manager","path":"app/src/main/java/com/skb/player/library/SettingsManager.kt","type":"data","role":"SharedPreferences","status":"active","dependencies":[]},
+    {"name":"file-ops","path":"app/src/main/java/com/skb/player/library/FileOps.kt","type":"service","role":"Rename/delete/move (Result API)","status":"active","dependencies":[]},
+    {"name":"thumbnail-loader","path":"app/src/main/java/com/skb/player/library/ThumbnailLoader.kt","type":"service","role":"Video frame extraction","status":"active","dependencies":[]},
+    {"name":"equalizer-manager","path":"app/src/main/java/com/skb/player/library/EqualizerManager.kt","type":"service","role":"Audio EQ presets","status":"active","dependencies":[]}
+  ]
+}

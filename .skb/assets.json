@@ -1,0 +1,17 @@
+{
+  "schema": "skb/v1",
+  "assets": [
+    {"type":"config","path":"app/build.gradle.kts","purpose":"App build — Compose, Media3, SDK"},
+    {"type":"config","path":"build.gradle.kts","purpose":"Root Gradle (AGP 8.5.2, Kotlin 1.9.24)"},
+    {"type":"config","path":"settings.gradle.kts","purpose":"Gradle settings"},
+    {"type":"config","path":"gradle.properties","purpose":"Gradle props"},
+    {"type":"config","path":".github/workflows/build.yml","purpose":"CI — build debug APK"},
+    {"type":"config","path":".gitignore","purpose":"Ignore rules"},
+    {"type":"image","path":"app/src/main/res/","purpose":"Icons, splash drawables"},
+    {"type":"data","path":"app/src/main/java/","purpose":"22 Kotlin files (MainActivity, PlaybackService, 12 ui, 9 library)"},
+    {"type":"data","path":"CHANGELOG.md","purpose":"Version history"},
+    {"type":"data","path":"PROJECT.md","purpose":"Identity card"},
+    {"type":"data","path":"README.md","purpose":"Public overview"},
+    {"type":"data","path":".skb/","purpose":"Machine-readable project state (schema v1)"}
+  ]
+}

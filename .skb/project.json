@@ -1,12 +1,10 @@
 {
-  "skb_version": "0.1.0",
-  "project_id": "skb-player",
-  "display_name": "SKB Player",
+  "schema": "skb/v1",
+  "id": "skb-player",
+  "name": "SKB Player",
   "type": "android-app",
   "subtype": "media-video-player",
-  "package": "com.skb.player",
   "version": "2.4.0",
-  "version_code": 24,
   "status": "active",
   "author": {
     "name": "SKB Dev",
@@ -17,18 +15,21 @@
     "remote": "https://github.com/skbsakib500/SKB-Player.git",
     "branch": "main"
   },
-  "stack": {
-    "language": ["kotlin-1.9.24"],
-    "ui": ["jetpack-compose-2024.06"],
-    "media": ["androidx-media3-1.4.1"],
-    "build": ["agp-8.5.2", "gradle-8.7", "jdk-17"],
-    "sdk": {"min": 24, "target": 34}
-  },
-  "companions": {
-    "sibling_media": "SKB-Music",
-    "life_os": ["Mimi-Android", "Agent-Mimi"],
-    "backup": "Mimi-Forever"
-  },
+  "stack": [
+    "kotlin-1.9.24",
+    "jetpack-compose-2024.06",
+    "androidx-media3-1.4.1",
+    "agp-8.5.2",
+    "gradle-8.7",
+    "jdk-17"
+  ],
+  "companions": [
+    "skb-dev",
+    "skb-music",
+    "skb-agent-mimi",
+    "skb-mimi-android"
+  ],
+  "purpose": "Privacy-first Android video player — offline, no ads",
   "created": "2026-09-15",
   "last_touched": "2026-09-16"
 }

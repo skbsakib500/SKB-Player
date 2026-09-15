@@ -1,0 +1,20 @@
+{
+  "schema": "skb/v1",
+  "releases": [
+    {"version":"1.0.0","date":"2026-09-15","tag":null,"commit":null,"highlights":["Study mode: bookmarks, notes, screenshots"]},
+    {"version":"1.4.0","date":"2026-09-15","tag":null,"commit":"16e032d","highlights":["Pinch zoom, auto-rotate","Folders tab","File rename/delete/info"]},
+    {"version":"2.0.0","date":"2026-09-15","tag":null,"commit":"019f41c","highlights":["Favorites, watch later, playlists","Equalizer, AB repeat","Theme switch, thumbnails","Multi-select"]},
+    {"version":"2.1.0","date":"2026-09-15","tag":null,"commit":"9db74cc","highlights":["Register as video player (intent filter)","Handle external open"]},
+    {"version":"2.2.0","date":"2026-09-15","tag":null,"commit":"0b14b69","highlights":["Video item ⋮ menu on all lists","Hoist folder state"]},
+    {"version":"2.3.0","date":"2026-09-15","tag":null,"commit":"18b2fa7","highlights":["Long-press multi-select + batch delete"]},
+    {"version":"2.4.0","date":"2026-09-15","tag":null,"commit":"b1f6265","highlights":["Splash animation","History thumbnails","Pinch-zoom, rotate layout"]}
+  ],
+  "milestones": [
+    {"name":"Schema v1 adopted","date":"2026-09-16","note":"Migrated to SKB Schema v1"},
+    {"name":"Version drift fixed","date":"2026-09-16","note":"versionName 0.1.0 → 2.4.0, code 1 → 24"}
+  ],
+  "events": [
+    {"type":"created","date":"2026-09-15","summary":"SKB-Player initialized"},
+    {"type":"major-change","date":"2026-09-15","summary":"v2.0 Pro — favorites, EQ, playlists"}
+  ]
+}
