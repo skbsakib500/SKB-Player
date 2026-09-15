@@ -25,4 +25,20 @@ class SettingsManager(context: Context) {
     var keepScreenOn: Boolean
         get() = prefs.getBoolean("keep_awake", true)
         set(v) = prefs.edit().putBoolean("keep_awake", v).apply()
+
+    var themeIndex: Int
+        get() = prefs.getInt("theme", 0)
+        set(v) = prefs.edit().putInt("theme", v).apply()
+
+    var sleepFadeOut: Boolean
+        get() = prefs.getBoolean("sleep_fade", true)
+        set(v) = prefs.edit().putBoolean("sleep_fade", v).apply()
+
+    var eqEnabled: Boolean
+        get() = prefs.getBoolean("eq_on", false)
+        set(v) = prefs.edit().putBoolean("eq_on", v).apply()
+
+    var eqPresetIndex: Int
+        get() = prefs.getInt("eq_preset", 0)
+        set(v) = prefs.edit().putInt("eq_preset", v).apply()
 }

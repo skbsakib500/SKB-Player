@@ -6,6 +6,7 @@ import android.app.PictureInPictureParams
 import android.content.ComponentName
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -25,7 +26,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -44,28 +44,41 @@ import androidx.media3.common.MediaItem
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.skb.player.library.BookmarkManager
+import com.skb.player.library.EqualizerManager
+import com.skb.player.library.FavoritesManager
 import com.skb.player.library.HistoryManager
+import com.skb.player.library.PlaylistManager
 import com.skb.player.library.SettingsManager
 import com.skb.player.library.VideoItem
 import com.skb.player.ui.HistoryScreen
 import com.skb.player.ui.HomeScaffold
+import com.skb.player.ui.SKBTheme
 import com.skb.player.ui.SearchScreen
 import com.skb.player.ui.VideoPlayerScreen
+import com.skb.player.ui.themeColors
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var history: HistoryManager
     private lateinit var bookmarks: BookmarkManager
     private lateinit var settings: SettingsManager
+    private lateinit var favorites: FavoritesManager
+    private lateinit var playlists: PlaylistManager
+    private val equalizer = EqualizerManager()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         history = HistoryManager(this)
         bookmarks = BookmarkManager(this)
         settings = SettingsManager(this)
+        favorites = FavoritesManager(this)
+        playlists = PlaylistManager(this)
 
         setContent {
-            MaterialTheme(colorScheme = skbAmoled()) {
+            var themeIdx by remember { mutableIntStateOf(settings.themeIndex) }
+            val theme = SKBTheme.entries.getOrElse(themeIdx) { SKBTheme.AMOLED }
+
+            MaterialTheme(colorScheme = themeColors(theme)) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -94,11 +107,29 @@ class MainActivity : ComponentActivity() {
                             CircularProgressIndicator()
                         }
                     } else {
-                        MainContent(ctrl, history, bookmarks, settings)
+                        MainContent(
+                            controller = ctrl,
+                            history = history,
+                            bookmarks = bookmarks,
+                            settings = settings,
+                            favorites = favorites,
+                            playlists = playlists,
+                            equalizer = equalizer,
+                            theme = theme,
+                            onThemeChange = {
+                                settings.themeIndex = it
+                                themeIdx = it
+                            }
+                        )
                     }
                 }
             }
         }
+    }
+
+    override fun onDestroy() {
+        equalizer.release()
+        super.onDestroy()
     }
 }
 
@@ -107,7 +138,12 @@ private fun MainContent(
     controller: MediaController,
     history: HistoryManager,
     bookmarks: BookmarkManager,
-    settings: SettingsManager
+    settings: SettingsManager,
+    favorites: FavoritesManager,
+    playlists: PlaylistManager,
+    equalizer: EqualizerManager,
+    theme: SKBTheme,
+    onThemeChange: (Int) -> Unit
 ) {
     val context = LocalContext.current
     var pickedUri by remember { mutableStateOf<Uri?>(null) }
@@ -138,9 +174,7 @@ private fun MainContent(
         when {
             showPlayer -> {
                 try { controller.pause() } catch (_: Exception) {}
-                showPlayer = false
-                queueMode = false
-                pickedUri = null
+                showPlayer = false; queueMode = false; pickedUri = null
             }
             showSearch -> showSearch = false
             showHistory -> showHistory = false
@@ -151,9 +185,7 @@ private fun MainContent(
                     context.findActivity()?.finish()
                 } else {
                     lastBackAt = now
-                    Toast.makeText(
-                        context, "Press back again to exit", Toast.LENGTH_SHORT
-                    ).show()
+                    Toast.makeText(context, "Press back again to exit", Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -162,13 +194,9 @@ private fun MainContent(
     fun openSingleVideo(uri: Uri) {
         val saved = try { history.getPosition(uri) } catch (_: Exception) { 0L }
         if (saved > 30_000L) {
-            pendingPos = saved
-            pendingUri = uri
+            pendingPos = saved; pendingUri = uri
         } else {
-            startFrom = 0L
-            pickedUri = uri
-            queueMode = false
-            showPlayer = true
+            startFrom = 0L; pickedUri = uri; queueMode = false; showPlayer = true
         }
     }
 
@@ -177,12 +205,22 @@ private fun MainContent(
         try {
             val items = videos.map { MediaItem.fromUri(it.uri) }
             controller.setMediaItems(items, 0, 0L)
-            controller.prepare()
-            controller.play()
-            pickedUri = videos.first().uri
-            startFrom = 0L
-            queueMode = true
-            showPlayer = true
+            controller.prepare(); controller.play()
+            pickedUri = videos.first().uri; startFrom = 0L
+            queueMode = true; showPlayer = true
+        } catch (e: Exception) {
+            Toast.makeText(context, "Queue failed: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun playUris(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        try {
+            val items = uris.map { MediaItem.fromUri(it) }
+            controller.setMediaItems(items, 0, 0L)
+            controller.prepare(); controller.play()
+            pickedUri = uris.first(); startFrom = 0L
+            queueMode = true; showPlayer = true
         } catch (e: Exception) {
             Toast.makeText(context, "Queue failed: ${e.message}", Toast.LENGTH_SHORT).show()
         }
@@ -193,54 +231,57 @@ private fun MainContent(
     ) { uri -> if (uri != null) openSingleVideo(uri) }
 
     when {
-        showPlayer -> {
-            VideoPlayerScreen(
-                player = controller,
-                uri = pickedUri,
-                startFrom = startFrom,
-                history = history,
-                bookmarkManager = bookmarks,
-                settings = settings,
-                isQueueMode = queueMode,
-                onBack = {
-                    try { controller.pause() } catch (_: Exception) {}
-                    showPlayer = false
-                    queueMode = false
-                    pickedUri = null
-                },
-                onEnterPip = {
-                    val act = context.findActivity() ?: return@VideoPlayerScreen
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        try {
-                            val params = PictureInPictureParams.Builder()
-                                .setAspectRatio(Rational(16, 9))
-                                .build()
-                            act.enterPictureInPictureMode(params)
-                        } catch (_: Exception) {}
-                    }
+        showPlayer -> VideoPlayerScreen(
+            player = controller,
+            uri = pickedUri,
+            startFrom = startFrom,
+            history = history,
+            bookmarkManager = bookmarks,
+            favorites = favorites,
+            playlists = playlists,
+            equalizer = equalizer,
+            settings = settings,
+            isQueueMode = queueMode,
+            onBack = {
+                try { controller.pause() } catch (_: Exception) {}
+                showPlayer = false; queueMode = false; pickedUri = null
+            },
+            onEnterPip = {
+                val act = context.findActivity() ?: return@VideoPlayerScreen
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    try {
+                        val params = PictureInPictureParams.Builder()
+                            .setAspectRatio(Rational(16, 9)).build()
+                        act.enterPictureInPictureMode(params)
+                    } catch (_: Exception) {}
                 }
-            )
-        }
+            }
+        )
         showSearch -> SearchScreen(
             history = history,
             onBack = { showSearch = false },
-            onOpenVideo = { uri -> showSearch = false; openSingleVideo(uri) }
+            onOpenVideo = { showSearch = false; openSingleVideo(it) }
         )
         showHistory -> HistoryScreen(
             history = history,
             onBack = { showHistory = false },
-            onOpenVideo = { uri -> showHistory = false; openSingleVideo(uri) }
+            onOpenVideo = { showHistory = false; openSingleVideo(it) }
         )
         else -> HomeScaffold(
             history = history,
             settings = settings,
+            favorites = favorites,
+            playlists = playlists,
+            theme = theme,
             tab = tab,
             onTabChange = { tab = it },
             onOpenVideo = { openSingleVideo(it) },
             onPickVideo = { picker.launch(arrayOf("video/*")) },
             onPlayAll = { playAll(it) },
+            onPlayUris = { playUris(it) },
             onOpenHistory = { showHistory = true },
-            onOpenSearch = { showSearch = true }
+            onOpenSearch = { showSearch = true },
+            onThemeChange = onThemeChange
         )
     }
 
@@ -268,23 +309,23 @@ private fun MainContent(
     }
 }
 
-private fun skbAmoled() = darkColorScheme(
-    background = Color(0xFF000000),
-    surface = Color(0xFF000000),
-    surfaceVariant = Color(0xFF0F0F0F),
-    primary = Color(0xFF00E5FF),
-    onPrimary = Color(0xFF000000),
-    onBackground = Color(0xFFEAEAEA),
-    onSurface = Color(0xFFEAEAEA),
-    onSurfaceVariant = Color(0xFFAAAAAA)
-)
-
 internal fun fmtTime(ms: Long): String {
     val s = ms / 1000
     val h = s / 3600
     val m = (s % 3600) / 60
     val sec = s % 60
     return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
+}
+
+internal fun shareText(context: Context, text: String, subject: String) {
+    try {
+        val i = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+            putExtra(Intent.EXTRA_SUBJECT, subject)
+        }
+        context.startActivity(Intent.createChooser(i, "Share"))
+    } catch (_: Exception) {}
 }
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {

@@ -2,10 +2,12 @@ package com.skb.player.ui
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -38,20 +41,25 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.skb.player.library.FavoritesManager
 import com.skb.player.library.HistoryManager
 import com.skb.player.library.MediaScanner
+import com.skb.player.library.PlaylistManager
 import com.skb.player.library.RecentEntry
 import com.skb.player.library.SettingsManager
+import com.skb.player.library.ThumbnailLoader
 import com.skb.player.library.VideoItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -60,6 +68,7 @@ enum class SKBTab(val emoji: String, val label: String) {
     HOME("\uD83C\uDFE0", "Home"),
     VIDEOS("\uD83C\uDFAC", "Videos"),
     FOLDERS("\uD83D\uDCC1", "Folders"),
+    LISTS("\u2B50", "Lists"),
     SETTINGS("\u2699", "Settings")
 }
 
@@ -74,18 +83,24 @@ enum class SortMode(val label: String) {
 fun HomeScaffold(
     history: HistoryManager,
     settings: SettingsManager,
+    favorites: FavoritesManager,
+    playlists: PlaylistManager,
+    theme: SKBTheme,
     tab: Int,
     onTabChange: (Int) -> Unit,
     onOpenVideo: (Uri) -> Unit,
     onPickVideo: () -> Unit,
     onPlayAll: (List<VideoItem>) -> Unit,
+    onPlayUris: (List<Uri>) -> Unit,
     onOpenHistory: () -> Unit,
-    onOpenSearch: () -> Unit
+    onOpenSearch: () -> Unit,
+    onThemeChange: (Int) -> Unit
 ) {
     val context = LocalContext.current
     var hasPermission by remember { mutableStateOf(false) }
     var libraryVideos by remember { mutableStateOf<List<VideoItem>>(emptyList()) }
     var sortMode by remember { mutableIntStateOf(0) }
+    var refreshKey by remember { mutableIntStateOf(0) }
 
     val permLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -95,20 +110,18 @@ fun HomeScaffold(
         arrayOf(Manifest.permission.READ_MEDIA_VIDEO)
     else arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(Unit, refreshKey) {
         val perms = requiredPerms()
         val granted = perms.all {
             ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
         }
         hasPermission = granted
-        if (!granted) permLauncher.launch(perms)
-    }
-
-    LaunchedEffect(hasPermission) {
-        if (hasPermission) {
+        if (granted) {
             libraryVideos = withContext(Dispatchers.IO) {
                 MediaScanner.scanVideos(context, 2000)
             }
+        } else {
+            permLauncher.launch(perms)
         }
     }
 
@@ -124,7 +137,7 @@ fun HomeScaffold(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            NavigationBar(containerColor = Color(0xFF0A0A0A)) {
+            NavigationBar(containerColor = navBarColor(theme)) {
                 SKBTab.entries.forEachIndexed { i, t ->
                     NavigationBarItem(
                         selected = tab == i,
@@ -139,29 +152,46 @@ fun HomeScaffold(
         Box(Modifier.fillMaxSize().padding(padding)) {
             when (tab) {
                 0 -> HomeTab(
-                    history, libraryVideos, hasPermission,
+                    history, libraryVideos, hasPermission, theme,
                     onOpenVideo, onPickVideo, onOpenHistory, onOpenSearch
                 ) { permLauncher.launch(requiredPerms()) }
                 1 -> VideosTab(
-                    sortedVideos, hasPermission, SortMode.entries[sortMode],
+                    sortedVideos, hasPermission, SortMode.entries[sortMode], theme,
                     onOpenVideo, onPickVideo, onPlayAll, onOpenSearch,
                     onCycleSort = { sortMode = (sortMode + 1) % SortMode.entries.size }
                 ) { permLauncher.launch(requiredPerms()) }
                 2 -> if (hasPermission) {
                     FolderScreen(allVideos = libraryVideos, onOpenVideo = onOpenVideo)
                 } else {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("Library access required")
-                            Spacer(Modifier.height(8.dp))
-                            Button(onClick = { permLauncher.launch(requiredPerms()) }) {
-                                Text("Grant Access")
-                            }
-                        }
-                    }
+                    PermissionPrompt { permLauncher.launch(requiredPerms()) }
                 }
-                else -> SettingsTabContent(settings)
+                3 -> ListsTab(
+                    favorites = favorites,
+                    playlists = playlists,
+                    allVideos = libraryVideos,
+                    theme = theme,
+                    onOpenVideo = onOpenVideo,
+                    onPlayUris = onPlayUris,
+                    onRefresh = { refreshKey++ }
+                )
+                else -> SettingsTabContent(
+                    settings = settings,
+                    theme = theme,
+                    onThemeChange = onThemeChange,
+                    onRefreshLibrary = { refreshKey++ }
+                )
             }
+        }
+    }
+}
+
+@Composable
+private fun PermissionPrompt(onRequest: () -> Unit) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Library access required")
+            Spacer(Modifier.height(8.dp))
+            Button(onClick = onRequest) { Text("Grant Access") }
         }
     }
 }
@@ -171,20 +201,21 @@ private fun HomeTab(
     history: HistoryManager,
     libraryVideos: List<VideoItem>,
     hasPermission: Boolean,
+    theme: SKBTheme,
     onOpenVideo: (Uri) -> Unit,
     onPickVideo: () -> Unit,
     onOpenHistory: () -> Unit,
     onOpenSearch: () -> Unit,
     onRequestPermission: () -> Unit
 ) {
-    val recent = history.getRecent(10)
+    val recent = history.getRecent(6)
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         item { Header() }
-        item { SearchBarPlaceholder(onClick = onOpenSearch) }
+        item { SearchBarPlaceholder(theme) { onOpenSearch() } }
 
         if (recent.isNotEmpty()) {
             item {
@@ -194,12 +225,12 @@ private fun HomeTab(
                 ) {
                     SectionHeader("Continue Watching", Modifier.weight(1f))
                     TextButton(onClick = onOpenHistory) {
-                        Text("History >", color = Color(0xFF00E5FF))
+                        Text("History >", color = MaterialTheme.colorScheme.primary)
                     }
                 }
             }
-            items(recent, key = { "recent_${it.uri}" }) { e ->
-                RecentCard(e) { onOpenVideo(e.uri) }
+            items(recent, key = { "r_${it.uri}" }) { e ->
+                RecentCard(e, theme) { onOpenVideo(e.uri) }
             }
         }
 
@@ -210,8 +241,8 @@ private fun HomeTab(
             }
         } else if (libraryVideos.isNotEmpty()) {
             item { SectionHeader("Recently Added") }
-            items(libraryVideos.take(10), key = { "lib_${it.uri}" }) { v ->
-                LibraryCard(v) { onOpenVideo(v.uri) }
+            items(libraryVideos.take(8), key = { "l_${it.uri}" }) { v ->
+                LibraryCard(v, theme) { onOpenVideo(v.uri) }
             }
         }
 
@@ -229,6 +260,7 @@ private fun VideosTab(
     libraryVideos: List<VideoItem>,
     hasPermission: Boolean,
     sortMode: SortMode,
+    theme: SKBTheme,
     onOpenVideo: (Uri) -> Unit,
     onPickVideo: () -> Unit,
     onPlayAll: (List<VideoItem>) -> Unit,
@@ -242,7 +274,7 @@ private fun VideosTab(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         item { Header() }
-        item { SearchBarPlaceholder(onClick = onOpenSearch) }
+        item { SearchBarPlaceholder(theme) { onOpenSearch() } }
 
         if (!hasPermission) {
             item {
@@ -260,14 +292,12 @@ private fun VideosTab(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Button(
-                        onClick = { onPlayAll(libraryVideos) },
-                        modifier = Modifier.weight(1f)
-                    ) { Text("\u25B6 Play All") }
-                    OutlinedButton(
-                        onClick = onPickVideo,
-                        modifier = Modifier.weight(1f)
-                    ) { Text("Pick") }
+                    Button(onClick = { onPlayAll(libraryVideos) }, modifier = Modifier.weight(1f)) {
+                        Text("\u25B6 Play All")
+                    }
+                    OutlinedButton(onClick = onPickVideo, modifier = Modifier.weight(1f)) {
+                        Text("Pick")
+                    }
                 }
                 Spacer(Modifier.height(4.dp))
                 Row(
@@ -277,16 +307,138 @@ private fun VideosTab(
                     Text(
                         "${libraryVideos.size} videos  \u2022  ${sortMode.label}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF888888),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f)
                     )
                     TextButton(onClick = onCycleSort) {
-                        Text("Sort \u21BB", color = Color(0xFF00E5FF))
+                        Text("Sort \u21BB", color = MaterialTheme.colorScheme.primary)
                     }
                 }
             }
-            items(libraryVideos, key = { "vid_${it.uri}" }) { v ->
-                LibraryCard(v) { onOpenVideo(v.uri) }
+            items(libraryVideos, key = { "v_${it.uri}" }) { v ->
+                LibraryCard(v, theme) { onOpenVideo(v.uri) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ListsTab(
+    favorites: FavoritesManager,
+    playlists: PlaylistManager,
+    allVideos: List<VideoItem>,
+    theme: SKBTheme,
+    onOpenVideo: (Uri) -> Unit,
+    onPlayUris: (List<Uri>) -> Unit,
+    onRefresh: () -> Unit
+) {
+    var refresh by remember { mutableIntStateOf(0) }
+    val favUris = remember(refresh) { favorites.getFavorites() }
+    val laterUris = remember(refresh) { favorites.getWatchLater() }
+    val allPlaylists = remember(refresh) { playlists.listAll() }
+
+    val favVideos = allVideos.filter { favUris.contains(it.uri.toString()) }
+    val laterVideos = allVideos.filter { laterUris.contains(it.uri.toString()) }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        item {
+            Column {
+                Text("Lists", style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold)
+                Text("Favorites, Watch Later, Playlists",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("\u2B50 Favorites (${favVideos.size})",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f))
+                if (favVideos.isNotEmpty()) {
+                    TextButton(onClick = { onPlayUris(favVideos.map { it.uri }) }) {
+                        Text("\u25B6 Play All", color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+        }
+        if (favVideos.isEmpty()) {
+            item { Text("No favorites yet. Tap \u2B50 in player.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        } else {
+            items(favVideos, key = { "fav_${it.uri}" }) { v ->
+                LibraryCard(v, theme) { onOpenVideo(v.uri) }
+            }
+        }
+
+        item {
+            Spacer(Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("\u23F0 Watch Later (${laterVideos.size})",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f))
+                if (laterVideos.isNotEmpty()) {
+                    TextButton(onClick = { onPlayUris(laterVideos.map { it.uri }) }) {
+                        Text("\u25B6 Play All", color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+        }
+        if (laterVideos.isEmpty()) {
+            item { Text("Nothing queued. Tap \u23F0 in player.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        } else {
+            items(laterVideos, key = { "later_${it.uri}" }) { v ->
+                LibraryCard(v, theme) { onOpenVideo(v.uri) }
+            }
+        }
+
+        item {
+            Spacer(Modifier.height(16.dp))
+            Text("Playlists (${allPlaylists.size})",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold)
+        }
+        if (allPlaylists.isEmpty()) {
+            item { Text("No playlists yet. Save from player.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        } else {
+            items(allPlaylists, key = { it.id }) { p ->
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = surfaceColor(theme)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text(p.name, fontWeight = FontWeight.Medium)
+                        Spacer(Modifier.height(2.dp))
+                        Text("${p.videoUris.size} videos",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(
+                                onClick = {
+                                    onPlayUris(p.videoUris.map { Uri.parse(it) })
+                                },
+                                enabled = p.videoUris.isNotEmpty()
+                            ) { Text("\u25B6 Play") }
+                            TextButton(onClick = {
+                                playlists.delete(p.id); refresh++
+                            }) { Text("Delete", color = Color(0xFFFF6E6E)) }
+                        }
+                    }
+                }
             }
         }
     }
@@ -295,20 +447,20 @@ private fun VideosTab(
 @Composable
 private fun Header() {
     Column {
-        Text(
-            "SKB Player",
+        Text("SKB Player",
             style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold
-        )
-        Text("Premium Offline Media OS", style = MaterialTheme.typography.bodySmall)
+            fontWeight = FontWeight.Bold)
+        Text("Premium Offline Media OS",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
 @Composable
-private fun SearchBarPlaceholder(onClick: () -> Unit) {
+private fun SearchBarPlaceholder(theme: SKBTheme, onClick: () -> Unit) {
     Surface(
         shape = RoundedCornerShape(14.dp),
-        color = Color(0xFF141414),
+        color = searchBarColor(theme),
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 4.dp)
@@ -320,7 +472,8 @@ private fun SearchBarPlaceholder(onClick: () -> Unit) {
         ) {
             Text("\uD83D\uDD0D", style = MaterialTheme.typography.bodyLarge)
             Spacer(Modifier.width(10.dp))
-            Text("Search videos, music\u2026", color = Color(0xFF888888))
+            Text("Search videos, music\u2026",
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -336,28 +489,21 @@ private fun SectionHeader(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun RecentCard(entry: RecentEntry, onClick: () -> Unit) {
+private fun RecentCard(entry: RecentEntry, theme: SKBTheme, onClick: () -> Unit) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF101010)),
+        colors = CardDefaults.cardColors(containerColor = surfaceColor(theme)),
         shape = RoundedCornerShape(14.dp),
         modifier = Modifier.fillMaxWidth().clickable { onClick() }
     ) {
         Column(Modifier.padding(14.dp)) {
-            Text(
-                entry.name,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                fontWeight = FontWeight.Medium
-            )
+            Text(entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                fontWeight = FontWeight.Medium)
             Spacer(Modifier.height(4.dp))
             val pct = if (entry.durationMs > 0)
-                (entry.positionMs * 100 / entry.durationMs).toInt().coerceIn(0, 100)
-            else 0
-            Text(
-                "$pct%  \u2022  ${fmt(entry.positionMs)} / ${fmt(entry.durationMs)}",
+                (entry.positionMs * 100 / entry.durationMs).toInt().coerceIn(0, 100) else 0
+            Text("$pct%  \u2022  ${fmt(entry.positionMs)} / ${fmt(entry.durationMs)}",
                 style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFF9A9A9A)
-            )
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
             val frac = if (entry.durationMs > 0)
                 entry.positionMs.toFloat() / entry.durationMs else 0f
             LinearProgressIndicator(
@@ -369,25 +515,61 @@ private fun RecentCard(entry: RecentEntry, onClick: () -> Unit) {
 }
 
 @Composable
-private fun LibraryCard(v: VideoItem, onClick: () -> Unit) {
+private fun LibraryCard(v: VideoItem, theme: SKBTheme, onClick: () -> Unit) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF101010)),
+        colors = CardDefaults.cardColors(containerColor = surfaceColor(theme)),
         shape = RoundedCornerShape(14.dp),
         modifier = Modifier.fillMaxWidth().clickable { onClick() }
     ) {
-        Column(Modifier.padding(14.dp)) {
-            Text(
-                v.name,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                fontWeight = FontWeight.Medium
+        Row(
+            modifier = Modifier.padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            VideoThumb(v.uri, theme)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(v.name, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    fontWeight = FontWeight.Medium)
+                Spacer(Modifier.height(4.dp))
+                Text("${fmt(v.durationMs)}  \u2022  ${humanSize(v.sizeBytes)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun VideoThumb(uri: Uri, theme: SKBTheme) {
+    val context = LocalContext.current
+    val bmp by produceState<Bitmap?>(initialValue = null, uri) {
+        value = withContext(Dispatchers.IO) {
+            ThumbnailLoader.load(context, uri, 200)
+        }
+    }
+    Box(
+        modifier = Modifier
+            .size(width = 96.dp, height = 64.dp)
+            .padding(end = 2.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        val b = bmp
+        if (b != null) {
+            Image(
+                bitmap = b.asImageBitmap(),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize()
             )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "${fmt(v.durationMs)}  \u2022  ${humanSize(v.sizeBytes)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFF9A9A9A)
-            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(2.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("\uD83C\uDFAC", style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
 }

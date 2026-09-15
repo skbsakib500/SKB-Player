@@ -35,12 +35,18 @@ private val SUB_SIZE_LABELS = listOf("Small", "Medium", "Large")
 private val PROFILE_LABELS = listOf("Cinema", "Anime", "Study", "Minimal")
 
 @Composable
-fun SettingsTabContent(settings: SettingsManager) {
+fun SettingsTabContent(
+    settings: SettingsManager,
+    theme: SKBTheme,
+    onThemeChange: (Int) -> Unit,
+    onRefreshLibrary: () -> Unit
+) {
     var speedIndex by remember { mutableIntStateOf(settings.defaultSpeedIndex) }
     var subSize by remember { mutableIntStateOf(settings.defaultSubtitleSize) }
     var subProfile by remember { mutableIntStateOf(settings.defaultSubtitleProfile) }
     var autoplay by remember { mutableStateOf(settings.autoplayQueue) }
     var keepAwake by remember { mutableStateOf(settings.keepScreenOn) }
+    var sleepFade by remember { mutableStateOf(settings.sleepFadeOut) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -49,58 +55,56 @@ fun SettingsTabContent(settings: SettingsManager) {
     ) {
         item {
             Column {
-                Text(
-                    "Settings",
+                Text("Settings",
                     style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    "Playback & subtitle defaults",
+                    fontWeight = FontWeight.Bold)
+                Text("Playback, appearance & subtitle defaults",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF9A9A9A)
-                )
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+
+        item {
+            SettingSection("Appearance") {
+                CycleRow(
+                    label = "Theme",
+                    value = theme.label
+                ) {
+                    val next = (theme.ordinal + 1) % SKBTheme.entries.size
+                    onThemeChange(next)
+                }
+                TextButton(
+                    onClick = onRefreshLibrary,
+                    modifier = Modifier.padding(horizontal = 12.dp)
+                ) { Text("Refresh Library") }
             }
         }
 
         item {
             SettingSection("Playback") {
-                CycleRow(
-                    label = "Default speed",
-                    value = SPEED_LABELS[speedIndex]
-                ) {
+                CycleRow("Default speed", SPEED_LABELS[speedIndex]) {
                     speedIndex = (speedIndex + 1) % SPEED_LABELS.size
                     settings.defaultSpeedIndex = speedIndex
                 }
-                ToggleRow(
-                    label = "Autoplay next in queue",
-                    checked = autoplay
-                ) {
-                    autoplay = it
-                    settings.autoplayQueue = it
+                ToggleRow("Autoplay next in queue", autoplay) {
+                    autoplay = it; settings.autoplayQueue = it
                 }
-                ToggleRow(
-                    label = "Keep screen on while playing",
-                    checked = keepAwake
-                ) {
-                    keepAwake = it
-                    settings.keepScreenOn = it
+                ToggleRow("Keep screen on while playing", keepAwake) {
+                    keepAwake = it; settings.keepScreenOn = it
+                }
+                ToggleRow("Sleep timer fade-out", sleepFade) {
+                    sleepFade = it; settings.sleepFadeOut = it
                 }
             }
         }
 
         item {
             SettingSection("Subtitles") {
-                CycleRow(
-                    label = "Default size",
-                    value = SUB_SIZE_LABELS[subSize]
-                ) {
+                CycleRow("Default size", SUB_SIZE_LABELS[subSize]) {
                     subSize = (subSize + 1) % SUB_SIZE_LABELS.size
                     settings.defaultSubtitleSize = subSize
                 }
-                CycleRow(
-                    label = "Profile",
-                    value = PROFILE_LABELS[subProfile]
-                ) {
+                CycleRow("Profile", PROFILE_LABELS[subProfile]) {
                     subProfile = (subProfile + 1) % PROFILE_LABELS.size
                     settings.defaultSubtitleProfile = subProfile
                 }
@@ -110,18 +114,16 @@ fun SettingsTabContent(settings: SettingsManager) {
         item {
             SettingSection("About") {
                 Column(Modifier.padding(12.dp)) {
-                    Text("SKB Player v1.3", fontWeight = FontWeight.SemiBold)
+                    Text("SKB Player v2.0", fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(4.dp))
-                    Text(
-                        "Premium Offline Media OS",
+                    Text("Premium Offline Media OS",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF9A9A9A)
-                    )
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(8.dp))
                     Text(
                         "Screenshots: Android/data/com.skb.player/files/screenshots",
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF666666)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -132,15 +134,13 @@ fun SettingsTabContent(settings: SettingsManager) {
 @Composable
 private fun SettingSection(title: String, content: @Composable () -> Unit) {
     Column {
-        Text(
-            title.uppercase(),
+        Text(title.uppercase(),
             style = MaterialTheme.typography.labelMedium,
-            color = Color(0xFF00E5FF),
+            color = MaterialTheme.colorScheme.primary,
             fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(start = 4.dp, bottom = 6.dp)
-        )
+            modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
         Card(
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF101010)),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
             shape = RoundedCornerShape(14.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -152,14 +152,12 @@ private fun SettingSection(title: String, content: @Composable () -> Unit) {
 @Composable
 private fun CycleRow(label: String, value: String, onClick: () -> Unit) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(label, modifier = Modifier.weight(1f))
         TextButton(onClick = onClick) {
-            Text(value, color = Color(0xFF00E5FF))
+            Text(value, color = MaterialTheme.colorScheme.primary)
         }
     }
 }
@@ -167,9 +165,7 @@ private fun CycleRow(label: String, value: String, onClick: () -> Unit) {
 @Composable
 private fun ToggleRow(label: String, checked: Boolean, onToggle: (Boolean) -> Unit) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(label, modifier = Modifier.weight(1f))

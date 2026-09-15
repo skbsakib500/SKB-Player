@@ -71,6 +71,9 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import com.skb.player.library.BookmarkManager
+import com.skb.player.library.EqualizerManager
+import com.skb.player.library.PlaylistManager
+import com.skb.player.library.FavoritesManager
 import com.skb.player.library.HistoryManager
 import com.skb.player.library.SettingsManager
 import kotlinx.coroutines.Job
@@ -118,6 +121,9 @@ fun VideoPlayerScreen(
     startFrom: Long,
     history: HistoryManager,
     bookmarkManager: BookmarkManager,
+    favorites: FavoritesManager,
+    playlists: PlaylistManager,
+    equalizer: EqualizerManager,
     settings: SettingsManager,
     isQueueMode: Boolean,
     onBack: () -> Unit,
@@ -320,6 +326,31 @@ fun VideoPlayerScreen(
         while (true) {
             inPip = try { activity?.isInPictureInPictureMode == true } catch (_: Exception) { false }
             delay(250)
+        }
+    }
+
+    LaunchedEffect(player) {
+        while (true) {
+            try {
+                val sessionId = player.audioSessionId
+                if (sessionId != 0 && sessionId != currentAudioSessionId) {
+                    currentAudioSessionId = sessionId
+                    equalizer.attach(sessionId)
+                }
+            } catch (_: Exception) {}
+            delay(2000)
+        }
+    }
+
+    LaunchedEffect(abRepeatA, abRepeatB) {
+        if (abRepeatA >= 0 && abRepeatB > abRepeatA) {
+            while (true) {
+                try {
+                    val pos = player.currentPosition
+                    if (pos >= abRepeatB) player.seekTo(abRepeatA)
+                } catch (_: Exception) {}
+                delay(300)
+            }
         }
     }
 
@@ -570,6 +601,30 @@ fun VideoPlayerScreen(
                         }
                     }
                 }) { Text("\uD83D\uDCF8 Shot", color = Color.White) }
+
+                val curUri = player.currentMediaItem?.localConfiguration?.uri
+                if (curUri != null) {
+                    val isFav = favorites.isFavorite(curUri)
+                    TextButton(onClick = {
+                        favorites.toggleFavorite(curUri)
+                        hudText = if (isFav) "Removed from favorites" else "Added to favorites"
+                    }) { Text(if (isFav) "\u2B50" else "\u2606", color = Color(0xFFFFD54F)) }
+
+                    TextButton(onClick = {
+                        playlists.let { _ -> }
+                        showSavePlaylist = true
+                    }) { Text("\uD83D\uDCD1", color = Color.White) }
+
+                    val isLater = favorites.isWatchLater(curUri)
+                    TextButton(onClick = {
+                        favorites.toggleWatchLater(curUri)
+                        hudText = if (isLater) "Removed from Watch Later" else "Added to Watch Later"
+                    }) { Text(if (isLater) "\u23F0" else "\u23F1", color = Color(0xFF00E5FF)) }
+                }
+
+                TextButton(onClick = { showEqDialog = true }) {
+                    Text("EQ", color = Color(0xFF00E5FF))
+                }
             }
 
             if (pipAvailable) {
@@ -646,6 +701,36 @@ fun VideoPlayerScreen(
                     TextButton(onClick = { sleepMenuOpen = true }) {
                         val label = if (sleepEndAt > 0L) "Sleep *" else "Sleep"
                         Text(label, color = Color.White)
+                    }
+
+                    TextButton(onClick = {
+                        when {
+                            abRepeatA < 0L -> {
+                                abRepeatA = position
+                                abRepeatB = -1L
+                                hudText = "A set ${formatTime(position)}"
+                            }
+                            abRepeatB < 0L -> {
+                                if (position > abRepeatA) {
+                                    abRepeatB = position
+                                    hudText = "A-B loop ${formatTime(abRepeatA)} - ${formatTime(abRepeatB)}"
+                                } else {
+                                    hudText = "B must be after A"
+                                }
+                            }
+                            else -> {
+                                abRepeatA = -1L
+                                abRepeatB = -1L
+                                hudText = "A-B cleared"
+                            }
+                        }
+                    }) {
+                        val lbl = when {
+                            abRepeatA < 0L -> "A-B"
+                            abRepeatB < 0L -> "A:${formatTime(abRepeatA)}"
+                            else -> "Looping"
+                        }
+                        Text(lbl, color = if (abRepeatA >= 0L) Color(0xFFFFD54F) else Color.White)
                     }
                 }
 
@@ -846,6 +931,39 @@ fun VideoPlayerScreen(
                 }
             )
         }
+    }
+
+    if (showEqDialog) {
+        EqualizerDialog(
+            eq = equalizer,
+            initialEnabled = settings.eqEnabled,
+            onDismiss = {
+                settings.eqEnabled = equalizer.enabled
+                showEqDialog = false
+            }
+        )
+    }
+
+    if (showSavePlaylist) {
+        val curUri = player.currentMediaItem?.localConfiguration?.uri
+        val list = playlists.listAll()
+        SaveToPlaylistDialog(
+            playlists = list,
+            onDismiss = { showSavePlaylist = false },
+            onCreateNew = { name ->
+                if (curUri != null && name.isNotBlank()) {
+                    val pl = playlists.create(name)
+                    playlists.addVideo(pl.id, curUri)
+                    hudText = "Added to ${pl.name}"
+                }
+            },
+            onAddTo = { pl ->
+                if (curUri != null) {
+                    playlists.addVideo(pl.id, curUri)
+                    hudText = "Added to ${pl.name}"
+                }
+            }
+        )
     }
 }
 
