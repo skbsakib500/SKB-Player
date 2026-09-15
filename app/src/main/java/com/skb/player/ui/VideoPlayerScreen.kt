@@ -48,7 +48,6 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
@@ -72,7 +71,7 @@ private const val CENTER_ZONE = 130f
 
 @Composable
 fun VideoPlayerScreen(
-    player: ExoPlayer,
+    player: Player,
     uri: Uri,
     history: HistoryManager,
     onBack: () -> Unit
