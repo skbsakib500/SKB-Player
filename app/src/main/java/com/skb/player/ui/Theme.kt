@@ -1,61 +1,43 @@
 package com.skb.player.ui
 
-import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.graphics.Brush
 
-enum class SKBTheme(val label: String) {
-    AMOLED("AMOLED"),
-    DARK("Dark"),
-    OCEAN("Ocean")
-}
+// --- 3080 COLOR SYSTEM ---
+val SpaceBlack = Color(0xFF05080F)
+val SpaceBlack2 = Color(0xFF0A1020)
+val NeonCyan = Color(0xFF00F0FF)
+val NeonPurple = Color(0xFF8A5CFF)
+val NeonBlue = Color(0xFF3A7BFF)
+val GlassWhite10 = Color(0x1AFFFFFF)
+val GlassWhite05 = Color(0x0DFFFFFF)
 
-fun themeColors(theme: SKBTheme) = when (theme) {
-    SKBTheme.AMOLED -> darkColorScheme(
-        background = Color(0xFF000000),
-        surface = Color(0xFF000000),
-        surfaceVariant = Color(0xFF0F0F0F),
-        primary = Color(0xFF00E5FF),
-        onPrimary = Color(0xFF000000),
-        onBackground = Color(0xFFEAEAEA),
-        onSurface = Color(0xFFEAEAEA),
-        onSurfaceVariant = Color(0xFFAAAAAA)
+val HoloGradient = Brush.linearGradient(listOf(NeonCyan, NeonPurple, NeonBlue))
+val CardBorderGradient = Brush.linearGradient(listOf(Color(0xFF00F0FF).copy(0.8f), Color(0xFF8A5CFF).copy(0.4f)))
+val BgNebulaGradient = Brush.radialGradient(
+    colors = listOf(Color(0xFF0F1A3A).copy(0.8f), Color(0xFF05080F)),
+    radius = 1200f
+)
+
+@Composable
+fun SKB3080Theme(content: @Composable () -> Unit) {
+    val scheme = darkColorScheme(
+        background = SpaceBlack,
+        surface = SpaceBlack2,
+        surfaceVariant = Color(0xFF101828),
+        primary = NeonCyan,
+        secondary = NeonPurple,
+        onBackground = Color.White,
+        onSurface = Color.White
     )
-    SKBTheme.DARK -> darkColorScheme(
-        background = Color(0xFF121212),
-        surface = Color(0xFF1E1E1E),
-        surfaceVariant = Color(0xFF242424),
-        primary = Color(0xFF00B0FF),
-        onPrimary = Color(0xFF000000),
-        onBackground = Color(0xFFEEEEEE),
-        onSurface = Color(0xFFEEEEEE),
-        onSurfaceVariant = Color(0xFFB0B0B0)
-    )
-    SKBTheme.OCEAN -> darkColorScheme(
-        background = Color(0xFF0A1A1F),
-        surface = Color(0xFF0F2429),
-        surfaceVariant = Color(0xFF153035),
-        primary = Color(0xFF1DE9B6),
-        onPrimary = Color(0xFF000000),
-        onBackground = Color(0xFFE0F2F1),
-        onSurface = Color(0xFFE0F2F1),
-        onSurfaceVariant = Color(0xFF80CBC4)
-    )
+    MaterialTheme(colorScheme = scheme, content = content)
 }
 
-fun surfaceColor(theme: SKBTheme): Color = when (theme) {
-    SKBTheme.AMOLED -> Color(0xFF101010)
-    SKBTheme.DARK -> Color(0xFF242424)
-    SKBTheme.OCEAN -> Color(0xFF153035)
-}
-
-fun navBarColor(theme: SKBTheme): Color = when (theme) {
-    SKBTheme.AMOLED -> Color(0xFF0A0A0A)
-    SKBTheme.DARK -> Color(0xFF1A1A1A)
-    SKBTheme.OCEAN -> Color(0xFF081418)
-}
-
-fun searchBarColor(theme: SKBTheme): Color = when (theme) {
-    SKBTheme.AMOLED -> Color(0xFF141414)
-    SKBTheme.DARK -> Color(0xFF2A2A2A)
-    SKBTheme.OCEAN -> Color(0xFF1B3A40)
-}
+// Helper for your existing files
+fun surfaceColor(theme: SKBTheme): Color = GlassWhite10
+fun navBarColor(theme: SKBTheme): Color = Color(0xCC05080F)
+fun searchBarColor(theme: SKBTheme): Color = GlassWhite10
+enum class SKBTheme { DARK, AMOLED, HOLO_3080 }
