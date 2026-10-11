@@ -135,7 +135,7 @@ fun SettingsTabContent(
 private fun SettingSection(title: String, content: @Composable () -> Unit) {
     Column {
         Text(title.uppercase(),
-            style = MaterialTheme.typography.nameMedium,
+            style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.primary,
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))
