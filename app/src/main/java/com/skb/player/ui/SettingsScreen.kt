@@ -68,7 +68,7 @@ fun SettingsTabContent(
             SettingSection("Appearance") {
                 CycleRow(
                     label = "Theme",
-                    value = theme.label
+                    value = theme.name
                 ) {
                     val next = (theme.ordinal + 1) % SKBTheme.entries.size
                     onThemeChange(next)
@@ -135,7 +135,7 @@ fun SettingsTabContent(
 private fun SettingSection(title: String, content: @Composable () -> Unit) {
     Column {
         Text(title.uppercase(),
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.nameMedium,
             color = MaterialTheme.colorScheme.primary,
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.padding(start = 4.dp, bottom = 6.dp))

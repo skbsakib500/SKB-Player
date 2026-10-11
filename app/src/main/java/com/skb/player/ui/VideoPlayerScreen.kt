@@ -157,7 +157,7 @@ fun VideoPlayerScreen(
                             when (mode) {
                                 DragMode.BRIGHTNESS -> { brightness = (startB - dy/size.height).coerceIn(0.01f,1f); activity?.window?.let { w -> val lp = w.attributes; lp.screenBrightness = brightness; w.attributes = lp }; hudText = "Brightness ${(brightness*100).toInt()}%" }
                                 DragMode.VOLUME -> { volumeFrac = (startV - dy/size.height).coerceIn(0f,1f); audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (volumeFrac*maxVolume).toInt(),0); hudText = "Volume ${(volumeFrac*100).toInt()}%" }
-                                DragMode.SEEK -> { try { player.seekTo((startP + dx/size.width*60000).coerceIn(0L, player.duration)) } catch(_:Exception){} }
+                                DragMode.SEEK -> { try { player.seekTo((startP + (dx/size.width*60000).toLong()).coerceIn(0L, player.duration.coerceAtLeast(0L))) } catch(_:Exception){} }
                                 else -> {}
                             }
                         }
